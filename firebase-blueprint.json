@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "staff"] },
+        "farmIds": { "type": "array", "items": { "type": "string" } },
+        "shopIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Farm": {
+      "title": "Farm",
+      "description": "Poultry farm details",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId"]
+    },
+    "Batch": {
+      "title": "Batch",
+      "description": "A batch of chicks",
+      "type": "object",
+      "properties": {
+        "batchId": { "type": "string" },
+        "farmId": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "initialQuantity": { "type": "number" },
+        "currentQuantity": { "type": "number" },
+        "mortalityCount": { "type": "number" },
+        "supplier": { "type": "string" },
+        "costPerChick": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed"] }
+      },
+      "required": ["batchId", "farmId", "startDate", "initialQuantity"]
+    },
+    "Inventory": {
+      "title": "Inventory",
+      "description": "Stock tracking for farm and shop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["live_bird", "dressed_chicken", "egg", "feed", "medicine"] },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "locationId": { "type": "string" },
+        "locationType": { "type": "string", "enum": ["farm", "shop", "cold_storage"] },
+        "lowStockThreshold": { "type": "number" }
+      },
+      "required": ["name", "type", "quantity", "unit", "locationId"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Sales transaction",
+      "type": "object",
+      "properties": {
+        "invoiceNo": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "subtotal": { "type": "number" },
+        "tax": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["paid", "partial", "credit"] },
+        "customerId": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "shopId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["invoiceNo", "total", "timestamp", "shopId"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Business expenses",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "batchId": { "type": "string" },
+        "farmId": { "type": "string" },
+        "shopId": { "type": "string" }
+      },
+      "required": ["category", "amount", "date"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer database",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "creditBalance": { "type": "number" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "phone"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Online/Offline orders",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "processing", "delivered", "cancelled"] },
+        "deliveryAddress": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "total", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "User profiles" },
+    "/farms/{farmId}": { "schema": "Farm", "description": "Farm details" },
+    "/batches/{batchId}": { "schema": "Batch", "description": "Batch tracking" },
+    "/inventory/{itemId}": { "schema": "Inventory", "description": "Inventory stock" },
+    "/sales/{saleId}": { "schema": "Sale", "description": "Sales records" },
+    "/expenses/{expenseId}": { "schema": "Expense", "description": "Expense records" },
+    "/customers/{customerId}": { "schema": "Customer", "description": "Customer records" },
+    "/orders/{orderId}": { "schema": "Order", "description": "Order records" }
+  }
+}

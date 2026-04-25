@@ -1,0 +1,103 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // users, farms, batches, inventory, sales, expenses, customers, orders, farmlogs
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'admin' ||
+        (request.auth.token.email == "chiranjeevdas972@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isManager() {
+      return isAuthenticated() && getUserData().role == 'manager';
+    }
+
+    function isStaff() {
+      return isAuthenticated() && getUserData().role == 'staff';
+    }
+
+    function hasAccess() {
+      return isAuthenticated() && (isAdmin() || isManager() || isStaff());
+    }
+
+    // Validation Helpers
+    function isValidTimestamp(ts) {
+      return ts is string && ts.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    match /farms/{farmId} {
+      allow read: if hasAccess();
+      allow write: if isAdmin();
+    }
+
+    match /batches/{batchId} {
+      allow read: if hasAccess();
+      allow write: if hasAccess();
+    }
+
+    match /farmlogs/{logId} {
+      allow read, write: if hasAccess();
+    }
+
+    match /inventory/{itemId} {
+      allow read: if hasAccess();
+      allow write: if hasAccess();
+    }
+
+    match /sales/{saleId} {
+      allow read: if hasAccess();
+      allow create: if hasAccess();
+      allow update, delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if hasAccess();
+      allow write: if isAdmin() || isManager();
+    }
+
+    match /customers/{customerId} {
+      allow read: if hasAccess();
+      allow write: if hasAccess();
+    }
+
+    match /orders/{orderId} {
+      allow read: if hasAccess();
+      allow write: if hasAccess();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if hasAccess();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    }
+
+    match /activity_logs/{logId} {
+      allow read: if isAdmin() || isManager();
+      allow create: if hasAccess();
+    }
+  }
+}
