@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
 import { collection, onSnapshot, query, orderBy, limit, doc, getDoc, where, updateDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -18,7 +18,7 @@ export default function AdminModule({ profile }: { profile: any }) {
     businessName: profile?.businessName || 'ChickMart',
     businessAddress: profile?.businessAddress || 'Digwadih, Dhanbad, Jharkhand, 828113',
     businessEmail: profile?.businessEmail || 'chiranjeev972@gmail.com',
-    businessPhone: profile?.businessPhone || '6299327929'
+    businessPhone: profile?.businessPhone || '8987766981'
   });
 
   const handleUpdateSettings = async (e: React.FormEvent) => {
@@ -26,6 +26,11 @@ export default function AdminModule({ profile }: { profile: any }) {
     if (!auth.currentUser) return;
     setIsSaving(true);
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to update business settings.");
+        setIsSaving(false);
+        return;
+      }
       await updateDoc(doc(db, 'users', auth.currentUser.uid), businessSettings);
       alert('Business profile updated successfully!');
     } catch (err) {
@@ -53,16 +58,21 @@ export default function AdminModule({ profile }: { profile: any }) {
   });
 
   useEffect(() => {
-    let q = query(collection(db, 'activity_logs'), orderBy('timestamp', 'desc'), limit(50));
+    if (!profile) return;
+
+    let q = query(collection(db, 'activity_logs'), where('ownerId', '==', profile.uid), limit(50));
     if (filter !== 'all') {
-      q = query(collection(db, 'activity_logs'), where('type', '==', filter), orderBy('timestamp', 'desc'), limit(50));
+      q = query(collection(db, 'activity_logs'), where('ownerId', '==', profile.uid), where('type', '==', filter), limit(50));
     }
     const unsub = onSnapshot(q, (snap) => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const sortedLogs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setLogs(sortedLogs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'activity_logs'));
 
     return () => unsub();
-  }, [filter]);
+  }, [filter, profile]);
 
   return (
     <div className="space-y-8 pb-12">
@@ -197,7 +207,7 @@ export default function AdminModule({ profile }: { profile: any }) {
                         {format(new Date(log.timestamp), 'MMM dd, HH:mm:ss')}
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm font-bold text-stone-900">{log.userId}</span>
+                        <span className="text-sm font-bold text-stone-900">{log.userName || log.userId}</span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-xs uppercase font-bold text-stone-600 tracking-tight">{log.type.replace('_', ' ')}</span>

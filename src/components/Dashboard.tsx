@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { Bird, ShoppingBag, LayoutDashboard, LogOut, Package, History, BrainCircuit, Plus, Users, Wallet, BarChart3, Truck, FileText, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { Bird, ShoppingBag, LayoutDashboard, LogOut, Package, History, BrainCircuit, Plus, Users, Wallet, BarChart3, Truck, FileText, ShieldCheck, ArrowLeft, Menu, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
@@ -17,7 +17,7 @@ import Activity from './Activity';
 import NotificationCenter from './NotificationCenter';
 import { useTranslation } from 'react-i18next';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, limit, where } from 'firebase/firestore';
 
 interface DashboardProps {
   user: FirebaseUser;
@@ -52,36 +52,53 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [moduleAction, setModuleAction] = useState<string | null>(null);
   const [isQuickActionOpen, setIsQuickActionOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { t } = useTranslation();
   const [stats, setStats] = useState({
-    totalBirds: 0,
+    birdsFromInventory: 0,
+    birdsFromBatches: 0,
     totalSales: 0,
     activeBatches: 0,
     lowStock: 0
   });
 
   useEffect(() => {
+    if (!profile) return;
+
     // Basic stats listeners
-    const unsubInv = onSnapshot(collection(db, 'inventory'), (snapshot) => {
+    const unsubInv = onSnapshot(query(collection(db, 'inventory'), where('ownerId', '==', profile.uid)), (snapshot) => {
       let birds = 0;
       let low = 0;
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.type === 'live_bird') birds += data.quantity;
-        if (data.quantity <= (data.lowStockThreshold || 0)) low++;
+      snapshot.docs.forEach(docItem => {
+        const data = docItem.data();
+        const type = data.type;
+        const qty = Number(data.quantity) || 0;
+        const threshold = Number(data.lowStockThreshold) !== undefined ? Number(data.lowStockThreshold) : 10;
+        
+        if (['live_bird', 'hen', 'goat'].includes(type)) birds += qty;
+        
+        // Count as low stock if quantity is less than or equal to threshold
+        if (qty <= threshold) {
+          low++;
+        }
       });
-      setStats(prev => ({ ...prev, totalBirds: birds, lowStock: low }));
+      setStats(prev => ({ ...prev, birdsFromInventory: birds, lowStock: low }));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'inventory'));
 
-    const unsubSales = onSnapshot(collection(db, 'sales'), (snapshot) => {
+    const unsubSales = onSnapshot(query(collection(db, 'sales'), where('ownerId', '==', profile.uid)), (snapshot) => {
       let total = 0;
       snapshot.docs.forEach(doc => total += (Number(doc.data().total) || 0));
       setStats(prev => ({ ...prev, totalSales: total }));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'sales'));
 
-    const unsubBatches = onSnapshot(collection(db, 'batches'), (snapshot) => {
-      const active = snapshot.docs.filter(d => d.data().status === 'active').length;
-      setStats(prev => ({ ...prev, activeBatches: active }));
+    const unsubBatches = onSnapshot(query(collection(db, 'batches'), where('ownerId', '==', profile.uid)), (snapshot) => {
+      const activeDocs = snapshot.docs.filter(d => d.data().status === 'active');
+      const active = activeDocs.length;
+      let birdCount = 0;
+      activeDocs.forEach(doc => {
+        birdCount += (Number(doc.data().currentQuantity) || 0);
+      });
+      setStats(prev => ({ ...prev, activeBatches: active, birdsFromBatches: birdCount }));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'batches'));
 
     return () => {
@@ -89,7 +106,9 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
       unsubSales();
       unsubBatches();
     };
-  }, []);
+  }, [profile]);
+
+  const totalBirds = stats.birdsFromInventory + stats.birdsFromBatches;
 
   const menuItems = [
     { id: 'overview', label: t('dashboard'), icon: <LayoutDashboard size={18} /> },
@@ -104,22 +123,40 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} />, hidden: profile?.subscriptionType === 'trial' },
   ].filter(item => !item.hidden);
 
+  const handleTabChange = (id: string) => {
+    setActiveTab(id);
+    setIsSidebarOpen(false);
+  };
+
   return (
-    <div className="flex h-screen bg-stone-50 overflow-hidden">
+    <div className="flex h-screen bg-stone-50 overflow-hidden relative">
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[150] lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-stone-200 flex flex-col">
-        <div className="p-6 flex items-center gap-3 border-b border-stone-100">
-          <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center text-white">
-            <HenIcon size={20} />
+      <aside className={`fixed lg:relative inset-y-0 left-0 w-64 bg-white border-r border-stone-200 flex flex-col z-[200] transition-transform duration-300 transform lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 flex items-center justify-between lg:justify-start gap-3 border-b border-stone-100">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center text-white">
+              <HenIcon size={20} />
+            </div>
+            <span className="font-bold text-lg tracking-tight text-stone-900">ChickMart</span>
           </div>
-          <span className="font-bold text-lg tracking-tight text-stone-900">ChickMart</span>
+          <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-2 text-stone-400 hover:text-stone-900 transition-colors">
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {menuItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleTabChange(item.id)}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === item.id 
                   ? 'bg-stone-900 text-white shadow-lg shadow-stone-200' 
@@ -134,12 +171,16 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
 
         <div className="p-4 border-t border-stone-100">
           <div className="flex items-center gap-3 px-4 py-3 mb-4">
-            <div className="w-8 h-8 rounded-full bg-stone-200 overflow-hidden">
-              <img src={user.photoURL || ''} alt="" referrerPolicy="no-referrer" />
+            <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center overflow-hidden shrink-0">
+              {user.photoURL ? (
+                <img src={user.photoURL} alt="" referrerPolicy="no-referrer" />
+              ) : (
+                <Users size={16} className="text-orange-600" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold truncate">{user.displayName}</p>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 overflow-hidden">
                 <p className="text-[10px] uppercase tracking-wider text-stone-400 font-bold">{profile?.role}</p>
                 {profile?.subscriptionType && (
                   <span className={`text-[8px] uppercase px-1.5 py-0.5 rounded-full font-black ${
@@ -165,29 +206,35 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-8">
-        <header className="mb-8 flex justify-between items-end">
-          <div className="flex items-center gap-4">
+      <main className="flex-1 overflow-y-auto p-4 md:p-8 pt-6">
+        <header className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden p-2 -ml-2 rounded-xl hover:bg-stone-100 text-stone-500"
+            >
+              <Menu size={24} />
+            </button>
             {activeTab !== 'overview' && (
               <Button 
                 variant="ghost" 
                 size="icon" 
                 onClick={() => setActiveTab('overview')}
-                className="rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-900"
+                className="hidden sm:flex rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-900"
               >
                 <ArrowLeft size={24} />
               </Button>
             )}
-            <div>
-              <h2 className="text-4xl font-bold tracking-tight text-stone-900">
+            <div className="min-w-0">
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-stone-900 truncate">
                 {menuItems.find(i => i.id === activeTab)?.label}
               </h2>
-              <p className="text-stone-500 mt-1">
+              <p className="text-stone-500 mt-1 truncate">
                 Welcome back, {user.displayName?.split(' ')[0]}
               </p>
             </div>
           </div>
-          <div className="flex gap-3 items-center">
+          <div className="flex gap-2 sm:gap-3 items-center w-full sm:w-auto justify-between sm:justify-end">
             <NotificationCenter />
             <Dialog 
               open={isQuickActionOpen} 
@@ -195,17 +242,18 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
             >
               <DialogTrigger
                 render={
-                  <Button className="rounded-xl bg-orange-600 hover:bg-orange-700 text-white shadow-sm gap-2">
+                  <Button className="rounded-xl bg-orange-600 hover:bg-orange-700 text-white shadow-sm gap-2 h-11 px-4 sm:px-6">
                     <Plus size={18} />
-                    Quick Action
+                    <span className="hidden sm:inline">Quick Action</span>
+                    <span className="sm:hidden">Add</span>
                   </Button>
                 }
               />
-              <DialogContent className="rounded-[2rem] max-w-sm p-6 border-none">
+              <DialogContent className="rounded-[2rem] max-w-[90vw] sm:max-w-sm p-4 sm:p-6 border-none">
                 <DialogHeader className="flex flex-row items-center justify-between mb-4 space-y-0">
                   <DialogTitle className="text-xl font-bold text-stone-900">Quick Actions</DialogTitle>
                 </DialogHeader>
-                <div className="grid grid-cols-2 gap-4 pb-2">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 pb-2">
                   {[
                     { label: 'NEW SALE', icon: <ShoppingBag size={24} />, active: 'shop', action: 'new-sale', color: 'bg-[#FFF7ED] text-[#EA580C]' },
                     { label: 'ADD CHICK', icon: <HenIcon size={24} />, active: 'farm', action: 'add-batch', color: 'bg-[#FFF7ED] text-[#EA580C]' },
@@ -217,11 +265,11 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
                     <button
                       key={i}
                       onClick={() => {
-                        setActiveTab(act.active);
+                        handleTabChange(act.active);
                         if (act.action) setModuleAction(act.action);
                         setIsQuickActionOpen(false);
                       }}
-                      className={`flex flex-col items-center justify-center p-6 rounded-2xl transition-all hover:scale-[1.02] active:scale-95 ${act.color}`}
+                      className={`flex flex-col items-center justify-center p-4 sm:p-6 rounded-2xl transition-all hover:scale-[1.02] active:scale-95 ${act.color}`}
                     >
                       <div className="mb-2">{act.icon}</div>
                       <span className="text-[10px] font-black tracking-wider text-center">{act.label}</span>
@@ -236,12 +284,12 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
         <div className="space-y-8">
           {activeTab === 'overview' && (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
                 {[
-                  { label: t('total_birds'), value: stats.totalBirds, color: 'text-stone-900', target: 'farm' },
-                  { label: t('total_sales'), value: `₹${stats.totalSales.toLocaleString()}`, color: 'text-green-600', target: 'analytics' },
-                  { label: 'Active Batches', value: stats.activeBatches, color: 'text-blue-600', target: 'farm' },
-                  { label: 'Low Stock Items', value: stats.lowStock, color: stats.lowStock > 0 ? 'text-red-600' : 'text-stone-900', target: 'inventory' },
+                   { label: 'TOTAL HENS, GOATS, BIRDS', value: totalBirds.toLocaleString(), color: 'text-stone-900', target: 'farm' },
+                   { label: t('total_sales'), value: `₹${stats.totalSales.toLocaleString()}`, color: 'text-green-600', target: 'analytics' },
+                   { label: 'Active Batches', value: stats.activeBatches, color: 'text-blue-600', target: 'farm' },
+                   { label: 'Low Stock Items', value: stats.lowStock, color: stats.lowStock > 0 ? 'text-red-600' : 'text-stone-900', target: 'inventory' },
                 ].map((stat, i) => (
                   <Card 
                     key={i} 
@@ -249,27 +297,43 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
                     onClick={() => setActiveTab(stat.target)}
                   >
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-xs font-bold uppercase tracking-widest text-stone-400 group-hover:text-orange-500 transition-colors">{stat.label}</CardTitle>
+                      <CardTitle className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-stone-400 group-hover:text-orange-500 transition-colors">{stat.label}</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className={`text-3xl font-bold ${stat.color}`}>{stat.value}</div>
+                      <div className={`text-2xl sm:text-3xl font-bold ${stat.color}`}>{stat.value}</div>
                     </CardContent>
                   </Card>
                 ))}
               </div>
-              <AnalyticsModule onNavigate={(tab) => setActiveTab(tab)} />
+              <div className="overflow-x-hidden">
+                <AnalyticsModule 
+                  onNavigate={(tab) => setActiveTab(tab)} 
+                  action={moduleAction} 
+                  onActionComplete={() => setModuleAction(null)} 
+                  profile={profile}
+                />
+              </div>
             </>
           )}
 
-          {activeTab === 'farm' && <FarmModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
-          {activeTab === 'shop' && <ShopModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
-          {activeTab === 'inventory' && <InventoryModule />}
-          {activeTab === 'accounts' && <AccountsModule action={moduleAction} onActionComplete={() => setModuleAction(null)} />}
-          {activeTab === 'customers' && <CustomerModule action={moduleAction} onActionComplete={() => setModuleAction(null)} />}
-          {activeTab === 'delivery' && <DeliveryModule />}
-          {activeTab === 'advanced_reports' && <AdvancedReportingModule />}
-          {activeTab === 'admin' && <Activity profile={profile} />}
-          {activeTab === 'analytics' && <AnalyticsModule onNavigate={(tab) => setActiveTab(tab)} />}
+          <div className="w-full">
+            {activeTab === 'farm' && <FarmModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
+            {activeTab === 'shop' && <ShopModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
+            {activeTab === 'inventory' && <InventoryModule profile={profile} />}
+            {activeTab === 'accounts' && <AccountsModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
+            {activeTab === 'customers' && <CustomerModule action={moduleAction} onActionComplete={() => setModuleAction(null)} profile={profile} />}
+            {activeTab === 'delivery' && <DeliveryModule profile={profile} />}
+            {activeTab === 'advanced_reports' && <AdvancedReportingModule profile={profile} />}
+            {activeTab === 'admin' && <Activity profile={profile} />}
+            {activeTab === 'analytics' && (
+              <AnalyticsModule 
+                onNavigate={(tab) => setActiveTab(tab)} 
+                action={moduleAction} 
+                onActionComplete={() => setModuleAction(null)} 
+                profile={profile}
+              />
+            )}
+          </div>
         </div>
       </main>
     </div>

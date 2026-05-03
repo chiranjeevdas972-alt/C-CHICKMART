@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
@@ -8,7 +8,12 @@ import { shopUtils } from '../lib/shopUtils';
 import { Lightbulb, TrendingUp, AlertTriangle, Activity } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 
-export default function AnalyticsModule({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export default function AnalyticsModule({ onNavigate, action, onActionComplete, profile }: { 
+  onNavigate?: (tab: string) => void,
+  action?: string | null,
+  onActionComplete?: () => void,
+  profile?: any
+}) {
   const [salesData, setSalesData] = useState<any[]>([]);
   const [expenseData, setExpenseData] = useState<any[]>([]);
   const [mortalityData, setMortalityData] = useState<any[]>([]);
@@ -16,8 +21,17 @@ export default function AnalyticsModule({ onNavigate }: { onNavigate?: (tab: str
   const [batches, setBatches] = useState<any[]>([]);
 
   useEffect(() => {
+    if (action === 'reports') {
+      onNavigate?.('advanced_reports');
+      onActionComplete?.();
+    }
+  }, [action]);
+
+  useEffect(() => {
+    if (!profile) return;
+
     // Real Data Integration for Sales & Mortality
-    const unsubSales = onSnapshot(collection(db, 'sales'), (snap) => {
+    const unsubSales = onSnapshot(query(collection(db, 'sales'), where('ownerId', '==', profile.uid)), (snap) => {
       const dailySales: Record<string, number> = {};
       const last7Days = Array.from({ length: 7 }).map((_, i) => {
         const date = format(subDays(new Date(), 6 - i), 'MMM dd');
@@ -37,7 +51,7 @@ export default function AnalyticsModule({ onNavigate }: { onNavigate?: (tab: str
       setSalesData(last7Days.map(date => ({ date, sales: dailySales[date] })));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'sales'));
 
-    const unsubLogs = onSnapshot(collection(db, 'farmlogs'), (snap) => {
+    const unsubLogs = onSnapshot(query(collection(db, 'farmlogs'), where('ownerId', '==', profile.uid)), (snap) => {
       const dailyMortality: Record<string, number> = {};
       const last7Days = Array.from({ length: 7 }).map((_, i) => {
         const date = format(subDays(new Date(), 6 - i), 'MMM dd');
@@ -58,7 +72,7 @@ export default function AnalyticsModule({ onNavigate }: { onNavigate?: (tab: str
     }, (err) => handleFirestoreError(err, OperationType.GET, 'farmlogs'));
 
     // Real Data Integration for Expenses
-    const unsubExp = onSnapshot(collection(db, 'expenses'), (snap) => {
+    const unsubExp = onSnapshot(query(collection(db, 'expenses'), where('ownerId', '==', profile.uid)), (snap) => {
       const cats: Record<string, number> = {};
       snap.docs.forEach(doc => {
         const data = doc.data();
@@ -67,15 +81,15 @@ export default function AnalyticsModule({ onNavigate }: { onNavigate?: (tab: str
       setExpenseData(Object.entries(cats).map(([name, value]) => ({ name, value })));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'expenses'));
 
-    const unsubInv = onSnapshot(collection(db, 'inventory'), (snap) => {
+    const unsubInv = onSnapshot(query(collection(db, 'inventory'), where('ownerId', '==', profile.uid)), (snap) => {
       setInventory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubBatches = onSnapshot(collection(db, 'batches'), (snap) => {
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'inventory'));
+    const unsubBatches = onSnapshot(query(collection(db, 'batches'), where('ownerId', '==', profile.uid)), (snap) => {
       setBatches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'batches'));
 
     return () => { unsubSales(); unsubLogs(); unsubExp(); unsubInv(); unsubBatches(); };
-  }, []);
+  }, [profile]);
 
   const pricingInsights = inventory
     .filter(item => item.lowStockThreshold)

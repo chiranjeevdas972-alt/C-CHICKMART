@@ -1,0 +1,173 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // HELPERS
+    // ===============================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Role check
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "chiranjeevdas972@gmail.com" && isVerified()) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin')
+      );
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && (data.get('ownerId', 'unknown') == request.auth.uid || data.get('userId', 'unknown') == request.auth.uid);
+    }
+
+    // ===============================================================
+    // VALIDATION BLUEPRINTS
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['admin', 'manager', 'staff', 'user'];
+    }
+
+    function isValidBatch(data) {
+      return data.keys().hasAll(['batchId', 'startDate', 'initialQuantity', 'status', 'ownerId']) &&
+             data.ownerId == request.auth.uid &&
+             data.batchId is string && data.batchId.size() <= 100 &&
+             data.initialQuantity is number &&
+             data.status in ['active', 'completed'];
+    }
+
+    function isValidFarmLog(data) {
+      return data.keys().hasAll(['type', 'ownerId', 'timestamp']) &&
+             data.ownerId == request.auth.uid &&
+             data.type in ['mortality', 'feed', 'vaccine', 'weight', 'cleaning', 'other'] &&
+             data.timestamp is string;
+    }
+
+    function isValidInventory(data) {
+      return data.keys().hasAll(['name', 'type', 'quantity', 'unit', 'ownerId']) &&
+             data.ownerId == request.auth.uid &&
+             data.name is string && data.name.size() <= 100 &&
+             data.quantity is number;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['invoiceNo', 'total', 'timestamp', 'ownerId']) &&
+             data.ownerId == request.auth.uid &&
+             data.total is number;
+    }
+
+    function isValidActivityLog(data) {
+      return data.keys().hasAll(['type', 'ownerId', 'timestamp', 'userId']) &&
+             data.ownerId == request.auth.uid &&
+             data.userId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // RULES
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidUser(incoming());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && 
+                    !incoming().diff(existing()).affectedKeys().hasAny(['role']) || isAdmin();
+    }
+
+    match /batches/{batchId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(batchId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidBatch(incoming()) && isValidId(batchId);
+      allow update: if isVerified() && (isOwner(existing()) || isAdmin()) && isValidId(batchId) && 
+                    incoming().ownerId == existing().ownerId;
+      allow delete: if isAdmin() && isValidId(batchId);
+    }
+
+    match /farmlogs/{logId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(logId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidFarmLog(incoming()) && isValidId(logId);
+      allow update: if isVerified() && (isOwner(existing()) || isAdmin()) && isValidId(logId) &&
+                    incoming().ownerId == existing().ownerId;
+      allow delete: if isAdmin() && isValidId(logId);
+    }
+
+    match /inventory/{itemId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(itemId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidInventory(incoming()) && isValidId(itemId);
+      allow update: if isVerified() && (isOwner(existing()) || isAdmin()) && isValidId(itemId) &&
+                    incoming().ownerId == existing().ownerId;
+      allow delete: if isAdmin() && isValidId(itemId);
+    }
+
+    match /sales/{saleId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(saleId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidSale(incoming()) && isValidId(saleId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(expenseId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidId(expenseId); // Simplified for now
+      allow update: if isVerified() && (isOwner(existing()) || isAdmin()) && isValidId(expenseId);
+      allow delete: if isAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(customerId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidId(customerId);
+      allow update: if isVerified() && (isOwner(existing()) || isAdmin()) && isValidId(customerId);
+      allow delete: if isAdmin();
+    }
+
+    match /activity_logs/{logId} {
+      allow get: if isSignedIn() && (isOwner(existing()) || isAdmin()) && isValidId(logId);
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isVerified() && isValidActivityLog(incoming()) && isValidId(logId);
+    }
+
+    match /notifications/{notifId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidId(notifId);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isVerified();
+      allow update: if isVerified() && resource.data.userId == request.auth.uid && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+    }
+
+    match /inquiries/{inquiryId} {
+      allow create: if true;
+      allow read, write: if isAdmin();
+    }
+  }
+}

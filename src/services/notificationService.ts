@@ -30,16 +30,26 @@ export const notificationService = {
     const q = query(
       collection(db, 'notifications'),
       where('userId', '==', userId),
-      orderBy('timestamp', 'desc'),
       limit(20)
     );
 
     return onSnapshot(q, (snapshot) => {
-      const notifications = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as AppNotification[];
-      callback(notifications);
+      const notifications = snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as AppNotification[];
+      
+      // Sort locally by timestamp
+      const sorted = [...notifications].sort((a, b) => {
+        const timeA = a.timestamp?.seconds || 0;
+        const timeB = b.timestamp?.seconds || 0;
+        return timeB - timeA;
+      });
+
+      callback(sorted);
+    }, (err) => {
+      console.error('Notification snapshot error:', err);
     });
   },
 

@@ -1,19 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy, updateDoc, doc, addDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, onSnapshot, query, orderBy, updateDoc, doc, addDoc, where } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Truck, MapPin, CheckCircle2, Clock, UserCheck, ArrowLeft, PackageCheck } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function DeliveryModule() {
+export default function DeliveryModule({ profile }: { profile?: any }) {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<any>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'sales'), orderBy('timestamp', 'desc'));
+    if (!profile) return;
+    const q = query(collection(db, 'sales'), where('ownerId', '==', profile.uid), orderBy('timestamp', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
       // For demo/system simulation, we assume some orders might need delivery
       // Real implementation would have a 'deliveryStatus' field
@@ -26,10 +27,15 @@ export default function DeliveryModule() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'sales'));
 
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const updateStatus = async (orderId: string, status: string) => {
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to update delivery status.");
+        return;
+      }
+
       const ref = doc(db, 'sales', orderId);
       const updateData: any = { 
         deliveryStatus: status,
@@ -48,8 +54,10 @@ export default function DeliveryModule() {
         type: 'delivery_update',
         orderId,
         status,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
-        userId: 'system' // Should be current user
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `sales/${orderId}`);

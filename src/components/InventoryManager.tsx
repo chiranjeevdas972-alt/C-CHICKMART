@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, onSnapshot, query, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, addDoc, onSnapshot, query, deleteDoc, doc, updateDoc, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from './ui/badge';
 import { Trash2, Plus, Package } from 'lucide-react';
 
-export default function InventoryManager() {
+export default function InventoryManager({ profile }: { profile: any }) {
   const [items, setItems] = useState<any[]>([]);
   const [newItem, setNewItem] = useState({
     name: '',
@@ -19,19 +19,25 @@ export default function InventoryManager() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'inventory'));
+    if (!profile) return;
+    const q = query(collection(db, 'inventory'), where('ownerId', '==', profile.uid));
     const unsub = onSnapshot(q, (snapshot) => {
       setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'inventory'));
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItem.name || newItem.quantity <= 0) return;
+    if (!newItem.name || newItem.quantity <= 0 || !profile) return;
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to manage inventory.");
+        return;
+      }
       await addDoc(collection(db, 'inventory'), {
         ...newItem,
+        ownerId: profile.uid,
         lastUpdated: new Date().toISOString()
       });
       setNewItem({ name: '', type: 'bird', quantity: 0, unit: 'pcs' });
@@ -42,6 +48,10 @@ export default function InventoryManager() {
 
   const handleDelete = async (id: string) => {
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified.");
+        return;
+      }
       await deleteDoc(doc(db, 'inventory', id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
@@ -73,6 +83,9 @@ export default function InventoryManager() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="bird">Birds</SelectItem>
+                <SelectItem value="hen">Hen</SelectItem>
+                <SelectItem value="duck">Duck</SelectItem>
+                <SelectItem value="goat">Goat</SelectItem>
                 <SelectItem value="feed">Feed</SelectItem>
                 <SelectItem value="medicine">Medicine</SelectItem>
                 <SelectItem value="egg">Eggs</SelectItem>
@@ -105,6 +118,7 @@ export default function InventoryManager() {
         <Table>
           <TableHeader className="bg-stone-50">
             <TableRow>
+              <TableHead className="w-16"></TableHead>
               <TableHead>Item Name</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Quantity</TableHead>
@@ -113,30 +127,60 @@ export default function InventoryManager() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.name}</TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="capitalize rounded-full px-3">
-                    {item.type}
-                  </Badge>
-                </TableCell>
-                <TableCell>{item.quantity} {item.unit}</TableCell>
-                <TableCell className="text-stone-500 text-xs">
-                  {new Date(item.lastUpdated).toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={() => handleDelete(item.id)}
-                    className="text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                  >
-                    <Trash2 size={18} />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {items.map((item) => {
+              const getImageForType = (type: string) => {
+                switch(type) {
+                  case 'hen': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=80&w=100';
+                  case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=80&w=100';
+                  case 'duck': return 'https://images.unsplash.com/photo-1555854817-40e071d01597?auto=format&fit=crop&q=80&w=100';
+                  case 'egg': 
+                  case 'eggs': return 'https://images.unsplash.com/photo-1587486913049-53fe8c17f16d?auto=format&fit=crop&q=80&w=100';
+                  case 'bird':
+                  case 'live_bird': return 'https://images.unsplash.com/photo-1628155930542-3c7a64e2c833?auto=format&fit=crop&q=80&w=100';
+                  case 'dressed_chicken': 
+                  case 'meat': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=80&w=100';
+                  case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=80&w=100';
+                  case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=100';
+                  default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=80&w=100';
+                }
+              };
+
+              return (
+                <TableRow key={item.id}>
+                  <TableCell>
+                    <div className="w-10 h-10 rounded-lg overflow-hidden border border-stone-100 shadow-xs">
+                      <img 
+                        src={getImageForType(item.type)} 
+                        alt="" 
+                        className="w-full h-full object-cover" 
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-medium">{item.name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="capitalize rounded-full px-3 text-[10px] font-bold">
+                      {item.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-bold text-stone-900">{item.quantity} {item.unit}</TableCell>
+                  <TableCell className="text-stone-500 text-[10px] font-bold uppercase tracking-tight">
+                    {item.lastUpdated ? new Date(item.lastUpdated).toLocaleString() : 'N/A'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={() => handleDelete(item.id)}
+                      className="text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                    >
+                      <Trash2 size={18} />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {items.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-12 text-stone-400">

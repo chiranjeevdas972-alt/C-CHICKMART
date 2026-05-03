@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, increment } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc, increment, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
@@ -60,33 +60,62 @@ export default function FarmModule({ action, onActionComplete, profile }: {
     startDate: format(new Date(), 'yyyy-MM-dd'),
     initialQuantity: 0,
     supplier: '',
-    costPerChick: 0
+    costPerChick: 0,
+    paidAmount: 0
   });
 
-  useEffect(() => {
-    const q = query(collection(db, 'batches'), orderBy('startDate', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setBatches(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'batches'));
+  const totalAmount = (newBatch.initialQuantity || 0) * (newBatch.costPerChick || 0);
+  const dueAmount = totalAmount - (newBatch.paidAmount || 0);
 
-    const qLogs = query(collection(db, 'farmlogs'));
+  useEffect(() => {
+    if (!profile) return;
+
+    const q = query(collection(db, 'batches'), where('ownerId', '==', profile.uid));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const sortedBatches = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+      setBatches(sortedBatches);
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'batches'));
+
+    const qLogs = query(collection(db, 'farmlogs'), where('ownerId', '==', profile.uid));
     const unsubLogs = onSnapshot(qLogs, (snapshot) => {
       setFarmLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'farmlogs'));
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'farmlogs'));
 
     return () => { unsub(); unsubLogs(); };
-  }, []);
+  }, [profile]);
 
-  const handleAddBatch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddBatch = async (e?: React.FormEvent | React.MouseEvent) => {
+    e?.preventDefault();
+    if (isSubmitting) return;
+    if (!profile?.uid) {
+      alert("Authentication error. Please refresh and try again.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified or your session has expired. Please verify your email or log in again.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (!newBatch.batchId || !newBatch.startDate || !newBatch.initialQuantity) {
+        alert("Please fill in all required fields (Batch ID, Start Date, and Initial Quantity).");
+        setIsSubmitting(false);
+        return;
+      }
+
       await addDoc(collection(db, 'batches'), {
         ...newBatch,
         currentQuantity: newBatch.initialQuantity,
         mortalityCount: 0,
-        totalCost: newBatch.initialQuantity * newBatch.costPerChick,
+        totalCost: totalAmount,
+        dueAmount: dueAmount,
         status: 'active',
+        ownerId: profile.uid,
         createdAt: new Date().toISOString()
       });
 
@@ -95,8 +124,11 @@ export default function FarmModule({ action, onActionComplete, profile }: {
         type: 'new_batch',
         batchId: newBatch.batchId,
         count: newBatch.initialQuantity,
+        totalCost: totalAmount,
+        ownerId: profile.uid,
         timestamp: new Date().toISOString(),
-        userId: 'system'
+        userId: profile.uid,
+        userName: profile.displayName || profile.name || 'User'
       });
 
       setIsAddBatchOpen(false);
@@ -105,9 +137,11 @@ export default function FarmModule({ action, onActionComplete, profile }: {
         startDate: format(new Date(), 'yyyy-MM-dd'),
         initialQuantity: 0,
         supplier: '',
-        costPerChick: 0
+        costPerChick: 0,
+        paidAmount: 0
       });
     } catch (err) {
+      console.error("Error creating batch:", err);
       handleFirestoreError(err, OperationType.CREATE, 'batches');
     } finally {
       setIsSubmitting(false);
@@ -125,6 +159,7 @@ export default function FarmModule({ action, onActionComplete, profile }: {
         batchId,
         type: 'mortality',
         count,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString()
       });
     } catch (err) {
@@ -147,10 +182,17 @@ export default function FarmModule({ action, onActionComplete, profile }: {
     if (!activeLogBatch || !logValue) return;
     setIsSubmitting(true);
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to log data.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const logData: any = {
         batchId: activeLogBatch.id,
         batchName: activeLogBatch.batchId,
         type: logType,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
         notes: logNotes
       };
@@ -186,17 +228,17 @@ export default function FarmModule({ action, onActionComplete, profile }: {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h3 className="text-xl font-bold flex items-center gap-2">
           <HenIcon className="text-orange-600" />
           Active Batches
           {isTrial && <span className="text-[10px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Trial Limit: 1 Batch</span>}
         </h3>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           {profile?.subscriptionType === 'professional' && (
             <Button 
               variant="outline" 
-              className="rounded-xl border-purple-200 text-purple-600 hover:bg-purple-50 gap-2 font-bold"
+              className="flex-1 sm:flex-none rounded-xl border-purple-200 text-purple-600 hover:bg-purple-50 gap-2 font-bold"
               onClick={() => setShowAIInsights(true)}
             >
               <Zap size={18} />
@@ -218,14 +260,14 @@ export default function FarmModule({ action, onActionComplete, profile }: {
               <DialogTitle>Add New Chick Batch</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleAddBatch} className="space-y-4 pt-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Batch ID / Name</Label>
                   <Input 
                     required 
                     value={newBatch.batchId} 
                     onChange={e => setNewBatch({...newBatch, batchId: e.target.value})} 
-                    placeholder="B-2024-001"
+                    placeholder="B-2025-001"
                   />
                 </div>
                 <div className="space-y-2">
@@ -238,7 +280,7 @@ export default function FarmModule({ action, onActionComplete, profile }: {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Initial Quantity</Label>
                   <Input 
@@ -258,15 +300,48 @@ export default function FarmModule({ action, onActionComplete, profile }: {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Supplier</Label>
-                <Input 
-                  value={newBatch.supplier} 
-                  onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} 
-                  placeholder="ABC Hatcheries"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Paid Amount (₹)</Label>
+                  <Input 
+                    type="number" 
+                    value={newBatch.paidAmount || ''} 
+                    onChange={e => setNewBatch({...newBatch, paidAmount: Number(e.target.value)})} 
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Total Amount (₹)</Label>
+                  <Input 
+                    readOnly 
+                    value={totalAmount} 
+                    className="bg-stone-50 font-bold text-orange-600"
+                  />
+                </div>
               </div>
-              <Button type="submit" disabled={isSubmitting} className="w-full bg-stone-900 text-white rounded-xl h-12">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Due Amount (₹)</Label>
+                  <Input 
+                    readOnly 
+                    value={dueAmount} 
+                    className="bg-red-50 font-bold text-red-600"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Supplier</Label>
+                  <Input 
+                    value={newBatch.supplier} 
+                    onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} 
+                    placeholder="ABC Hatcheries"
+                  />
+                </div>
+              </div>
+              <Button 
+                type="submit" 
+                disabled={isSubmitting} 
+                className="w-full bg-stone-900 text-white rounded-xl h-12 font-bold hover:bg-stone-800 transition-colors"
+              >
                 {isSubmitting ? 'Creating...' : 'Create Batch'}
               </Button>
             </form>

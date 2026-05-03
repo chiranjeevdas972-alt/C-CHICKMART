@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from './ui/badge';
 import { History, AlertTriangle, Syringe, Utensils, Sparkles } from 'lucide-react';
 
-export default function FarmLogManager() {
+export default function FarmLogManager({ profile }: { profile: any }) {
   const [logs, setLogs] = useState<any[]>([]);
   const [newLog, setNewLog] = useState({
     type: 'feeding',
@@ -17,18 +17,30 @@ export default function FarmLogManager() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'farmlogs'), orderBy('timestamp', 'desc'), limit(50));
+    if (!profile) return;
+    const q = query(
+      collection(db, 'farmlogs'), 
+      where('ownerId', '==', profile.uid),
+      orderBy('timestamp', 'desc'), 
+      limit(50)
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'farmlogs'));
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const handleAddLog = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!profile) return;
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to record activity logs.");
+        return;
+      }
       await addDoc(collection(db, 'farmlogs'), {
         ...newLog,
+        ownerId: profile.uid,
         timestamp: new Date().toISOString()
       });
       setNewLog({ type: 'feeding', details: '', count: 0 });

@@ -11,7 +11,7 @@ interface LandingPageProps {
   onPlanSelect: (plan: { name: string, price: number }) => void;
 }
 
-const HenIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+export const HenIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
   <svg 
     width={size} 
     height={size} 
@@ -59,6 +59,38 @@ export default function LandingPage({ onLogin, onPlanSelect }: LandingPageProps)
       setSubmittingInquiry(false);
     }
   };
+
+  const [billingCycle, setBillingCycle] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+
+  const plans = [
+    {
+      name: "Free Trial",
+      price: "0",
+      duration: "7 Days",
+      desc: "Explore all basic features to see how ChickMart works.",
+      features: ["Single Batch Management", "Basic POS Invoicing", "Email Support", "Daily Mortality Log"],
+      button: "Start Free Trial",
+      popular: false
+    },
+    {
+      name: "Standard",
+      price: billingCycle === 'weekly' ? "149" : billingCycle === 'monthly' ? "499" : "4999",
+      duration: billingCycle === 'weekly' ? "Per Week" : billingCycle === 'monthly' ? "Per Month" : "Per Year",
+      desc: "Perfect for growing small to medium scale farms.",
+      features: ["Unlimited Batches", "GST & Thermal Printing", "WhatsApp Alerts", "Inventory Management", "Standard Analytics"],
+      button: "Go Standard",
+      popular: true
+    },
+    {
+      name: "Professional",
+      price: billingCycle === 'weekly' ? "299" : billingCycle === 'monthly' ? "999" : "9999",
+      duration: billingCycle === 'weekly' ? "Per Week" : billingCycle === 'monthly' ? "Per Month" : "Per Year",
+      desc: "Advanced tools for high-performance poultry businesses.",
+      features: ["Everything in Standard", "Multi-farm Management", "Advanced Financial Reports", "AI FCR Optimization", "Priority Support"],
+      button: "Go Professional",
+      popular: false
+    }
+  ];
 
   return (
     <div className="relative overflow-hidden">
@@ -257,39 +289,27 @@ export default function LandingPage({ onLogin, onPlanSelect }: LandingPageProps)
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-4xl md:text-5xl font-black tracking-tighter mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-lg text-stone-500">Choose the plan that fits your farm's scale.</p>
+            <p className="text-lg text-stone-500 mb-8">Choose the plan that fits your farm's scale.</p>
+            
+            <div className="inline-flex p-1 bg-stone-200 rounded-2xl">
+              {(['weekly', 'monthly', 'yearly'] as const).map((cycle) => (
+                <button
+                  key={cycle}
+                  onClick={() => setBillingCycle(cycle)}
+                  className={`px-6 py-2 rounded-xl text-sm font-bold transition-all ${
+                    billingCycle === cycle 
+                      ? 'bg-white text-stone-900 shadow-sm' 
+                      : 'text-stone-500 hover:text-stone-700'
+                  }`}
+                >
+                  {cycle.charAt(0).toUpperCase() + cycle.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {[
-              {
-                name: "Free Trial",
-                price: "0",
-                duration: "7 Days",
-                desc: "Explore all basic features to see how ChickMart works.",
-                features: ["Single Batch Management", "Basic POS Invoicing", "Email Support", "Daily Mortality Log"],
-                button: "Start Free Trial",
-                popular: false
-              },
-              {
-                name: "Standard",
-                price: "499",
-                duration: "Per Month",
-                desc: "Perfect for growing small to medium scale farms.",
-                features: ["Unlimited Batches", "GST & Thermal Printing", "WhatsApp Alerts", "Inventory Management", "Standard Analytics"],
-                button: "Go Standard",
-                popular: true
-              },
-              {
-                name: "Professional",
-                price: "999",
-                duration: "Per Month",
-                desc: "Advanced tools for high-performance poultry businesses.",
-                features: ["Everything in Standard", "Multi-farm Management", "Advanced Financial Reports", "AI FCR Optimization", "Priority Support"],
-                button: "Go Professional",
-                popular: false
-              }
-            ].map((plan, i) => (
+            {plans.map((plan, i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
@@ -473,13 +493,13 @@ export default function LandingPage({ onLogin, onPlanSelect }: LandingPageProps)
       <footer className="py-12 border-t border-stone-100 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center text-white">
-              <Bird size={20} />
+            <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
+              <HenIcon size={24} />
             </div>
             <span className="font-bold text-xl tracking-tight">ChickMart</span>
           </div>
           <p className="text-stone-400 text-sm">
-            © 2024 ChickMart Management System. All rights reserved.
+            © 2025 ChickMart Management System. All rights reserved.
           </p>
           <div className="flex flex-col md:items-end gap-2 text-sm font-bold text-stone-500">
             <div className="flex gap-6">

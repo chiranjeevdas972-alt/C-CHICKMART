@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, increment, where, getDocs } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,7 +9,7 @@ import { Users, Phone, MapPin, CreditCard, Plus, Search, ArrowLeft, History } fr
 import { Badge } from './ui/badge';
 import { format } from 'date-fns';
 
-export default function CustomerModule({ action, onActionComplete }: { action?: string | null, onActionComplete?: () => void }) {
+export default function CustomerModule({ action, onActionComplete, profile }: { action?: string | null, onActionComplete?: () => void, profile?: any }) {
   const [customers, setCustomers] = useState<any[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [selectedHistoryCust, setSelectedHistoryCust] = useState<any>(null);
@@ -29,18 +29,27 @@ export default function CustomerModule({ action, onActionComplete }: { action?: 
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'customers'), orderBy('name', 'asc'));
+    if (!profile) return;
+    const q = query(collection(db, 'customers'), where('ownerId', '==', profile.uid));
     const unsub = onSnapshot(q, (snapshot) => {
-      setCustomers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const sortedCustomers = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+      setCustomers(sortedCustomers);
     }, (err) => handleFirestoreError(err, OperationType.GET, 'customers'));
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to register customers.");
+        return;
+      }
       await addDoc(collection(db, 'customers'), {
         ...newCustomer,
+        ownerId: profile?.uid || 'unknown',
         history: [],
         createdAt: new Date().toISOString()
       });
@@ -53,9 +62,17 @@ export default function CustomerModule({ action, onActionComplete }: { action?: 
 
   const fetchCustomerHistory = async (customer: any) => {
     try {
-      const q = query(collection(db, 'sales'), where('customerId', '==', customer.id), orderBy('timestamp', 'desc'));
+      if (!profile) return;
+      const q = query(
+        collection(db, 'sales'), 
+        where('ownerId', '==', profile.uid),
+        where('customerId', '==', customer.id)
+      );
       const snap = await getDocs(q);
-      setCustomerSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const sortedDocs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setCustomerSales(sortedDocs);
       setSelectedHistoryCust(customer);
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'sales');
@@ -67,8 +84,12 @@ export default function CustomerModule({ action, onActionComplete }: { action?: 
     
     const payment = Number(amount);
     if (payment <= 0) return;
-
+    
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified.");
+        return;
+      }
       const custRef = doc(db, 'customers', customerId);
       await updateDoc(custRef, {
         creditBalance: increment(-payment)
@@ -81,8 +102,10 @@ export default function CustomerModule({ action, onActionComplete }: { action?: 
         paymentStatus: 'paid',
         customerId,
         customerName: customers.find(c => c.id === customerId)?.name || 'Unknown',
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
-        type: 'payment'
+        type: 'payment',
+        userId: profile?.uid || 'system'
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `customers/${customerId}`);

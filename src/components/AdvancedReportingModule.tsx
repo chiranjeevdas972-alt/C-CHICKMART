@@ -6,19 +6,20 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { TrendingUp, TrendingDown, Download, Filter, FileText, Calendar } from 'lucide-react';
 import { format, subDays, startOfMonth, endOfMonth } from 'date-fns';
 
-export default function AdvancedReportingModule() {
+export default function AdvancedReportingModule({ profile }: { profile?: any }) {
   const [report, setReport] = useState<any>(null);
   const [topProducts, setTopProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!profile) return;
     async function fetchData() {
       const startDate = startOfMonth(new Date());
       const endDate = endOfMonth(new Date());
       
       const [pl, top] = await Promise.all([
-        reportingService.getProfitLoss(startDate, endDate),
-        reportingService.getTopProducts(5)
+        reportingService.getProfitLoss(profile.uid, startDate, endDate),
+        reportingService.getTopProducts(profile.uid, 5)
       ]);
       
       setReport(pl);
@@ -26,7 +27,7 @@ export default function AdvancedReportingModule() {
       setLoading(false);
     }
     fetchData();
-  }, []);
+  }, [profile]);
 
   const COLORS = ['#ea580c', '#18181b', '#16a34a', '#2563eb', '#9333ea'];
 

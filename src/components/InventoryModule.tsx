@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, increment } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, increment, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
@@ -12,7 +12,7 @@ import { Plus, Package, AlertTriangle, ArrowRightLeft, Warehouse, Trash2, Histor
 import { notificationService } from '../services/notificationService';
 import { format } from 'date-fns';
 
-export default function InventoryModule() {
+export default function InventoryModule({ profile }: { profile?: any }) {
   const [items, setItems] = useState<any[]>([]);
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [newItem, setNewItem] = useState({
@@ -26,20 +26,40 @@ export default function InventoryModule() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'inventory'), orderBy('name', 'asc'));
+    if (!profile) return;
+    const q = query(collection(db, 'inventory'), where('ownerId', '==', profile.uid));
     const unsub = onSnapshot(q, (snapshot) => {
-      setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const sortedItems = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+      setItems(sortedItems);
     }, (err) => handleFirestoreError(err, OperationType.GET, 'inventory'));
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to manage inventory.");
+        return;
+      }
+
       await addDoc(collection(db, 'inventory'), {
         ...newItem,
         locationId: 'default', // In real app, select farm/shop ID
+        ownerId: profile?.uid || 'unknown',
         createdAt: new Date().toISOString()
+      });
+      // Log activity
+      await addDoc(collection(db, 'activity_logs'), {
+        type: 'inventory_add',
+        itemName: newItem.name,
+        quantity: newItem.quantity,
+        ownerId: profile?.uid || 'unknown',
+        timestamp: new Date().toISOString(),
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
       setIsAddItemOpen(false);
       setNewItem({
@@ -59,6 +79,10 @@ export default function InventoryModule() {
   const deleteItem = async (id: string) => {
     if (!confirm('Are you sure you want to delete this item?')) return;
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified.");
+        return;
+      }
       await deleteDoc(doc(db, 'inventory', id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `inventory/${id}`);
@@ -67,6 +91,11 @@ export default function InventoryModule() {
 
   const updateStock = async (itemId: string, delta: number) => {
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified.");
+        return;
+      }
+
       const itemRef = doc(db, 'inventory', itemId);
       const itemIdx = items.findIndex(i => i.id === itemId);
       const currentItem = items[itemIdx];
@@ -93,8 +122,10 @@ export default function InventoryModule() {
         itemName: currentItem.name,
         delta,
         newQty,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
-        userId: 'system'
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `inventory/${itemId}`);
@@ -141,6 +172,9 @@ export default function InventoryModule() {
                       onChange={e => setNewItem({...newItem, type: e.target.value})}
                     >
                       <option value="live_bird">Live Bird</option>
+                      <option value="hen">Hen</option>
+                      <option value="duck">Duck</option>
+                      <option value="goat">Goat</option>
                       <option value="dressed_chicken">Dressed Chicken</option>
                       <option value="egg">Egg</option>
                       <option value="feed">Feed</option>
@@ -210,63 +244,101 @@ export default function InventoryModule() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {items.map((item) => (
-          <Card key={item.id} className="rounded-[2rem] border-stone-200 shadow-sm overflow-hidden flex flex-col">
-            <CardHeader className="bg-stone-50 border-b border-stone-100 pb-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle className="text-base">{item.name}</CardTitle>
-                  <CardDescription className="text-[10px] uppercase font-bold tracking-wider">{item.type.replace('_', ' ')}</CardDescription>
+        {items.map((item) => {
+          const getImageForType = (type: string) => {
+            switch(type) {
+              case 'hen': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=80&w=400';
+              case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=80&w=400';
+              case 'duck': return 'https://images.unsplash.com/photo-1555854817-40e071d01597?auto=format&fit=crop&q=80&w=400';
+              case 'egg': return 'https://images.unsplash.com/photo-1587486913049-53fe8c17f16d?auto=format&fit=crop&q=80&w=400';
+              case 'live_bird': return 'https://images.unsplash.com/photo-1628155930542-3c7a64e2c833?auto=format&fit=crop&q=80&w=400';
+              case 'dressed_chicken': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=80&w=400';
+              case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=80&w=400';
+              case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=400';
+              default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=80&w=400';
+            }
+          };
+
+          return (
+            <Card key={item.id} className="rounded-[2.5rem] border-stone-200 shadow-sm overflow-hidden flex flex-col group hover:shadow-xl transition-all duration-500 bg-white">
+              <div className="h-40 w-full overflow-hidden relative">
+                <img 
+                  src={getImageForType(item.type)} 
+                  alt={item.name}
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-60" />
+                <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center text-white">
+                  <Badge className="bg-white/20 backdrop-blur-md text-white border-white/30 rounded-full px-3 py-1 font-bold text-[10px] uppercase tracking-widest">
+                    {item.type.replace('_', ' ')}
+                  </Badge>
+                  <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-md px-2 py-1 rounded-full border border-white/10">
+                    <Warehouse size={12} className="text-orange-400" />
+                    <span className="text-[10px] font-black uppercase tracking-tight">{item.locationType}</span>
+                  </div>
                 </div>
-                <Badge variant={item.quantity <= (item.lowStockThreshold || 0) ? 'destructive' : 'outline'} className="rounded-full">
-                  {item.quantity <= (item.lowStockThreshold || 0) ? 'Low Stock' : 'In Stock'}
-                </Badge>
               </div>
-            </CardHeader>
-            <CardContent className="pt-4 flex-1">
-              <div className="flex justify-between items-end mb-4">
-                <div className="flex items-center gap-2 text-stone-400">
-                  <Warehouse size={14} />
-                  <span className="text-xs font-bold uppercase tracking-tight">{item.locationType}</span>
+              <CardHeader className="pb-2 pt-5 px-6">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <CardTitle className="text-lg font-black tracking-tighter text-stone-900 group-hover:text-orange-600 transition-colors">{item.name}</CardTitle>
+                    <CardDescription className="text-[10px] uppercase font-black tracking-[0.2em] text-stone-400 mt-0.5">REF: {item.id.slice(0, 8)}</CardDescription>
+                  </div>
+                  <Badge variant={item.quantity <= (item.lowStockThreshold || 0) ? 'destructive' : 'outline'} className="rounded-full font-bold text-[9px] h-5">
+                    {item.quantity <= (item.lowStockThreshold || 0) ? 'LOW' : 'STOCK'}
+                  </Badge>
                 </div>
-                <div className="text-right">
-                  <span className="text-3xl font-black text-stone-900 leading-none">{item.quantity}</span>
-                  <span className="text-xs font-bold text-stone-400 ml-1">{item.unit}</span>
-                  <p className="text-[10px] font-bold text-green-600 mt-1">₹{item.price}/{item.unit}</p>
+              </CardHeader>
+              <CardContent className="pt-2 flex-1 px-6 pb-6">
+                <div className="flex justify-between items-end mb-6">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Available Stock</p>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-4xl font-black text-stone-900 leading-none">{item.quantity}</span>
+                      <span className="text-xs font-black text-stone-400 uppercase">{item.unit}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1">Price Point</p>
+                    <div className="px-3 py-1 bg-green-50 rounded-full border border-green-100 inline-block">
+                      <p className="text-sm font-black text-green-700 tracking-tight">₹{item.price}<span className="text-[10px] ml-0.5 opacity-60">/{item.unit}</span></p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              
-              <div className="flex items-center gap-2 p-1 bg-stone-50 rounded-2xl border border-stone-100">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => updateStock(item.id, -1)}
-                  className="flex-1 h-10 rounded-xl hover:bg-white hover:text-red-600 hover:shadow-sm"
-                >
-                  -
-                </Button>
-                <div className="w-px h-6 bg-stone-200" />
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => updateStock(item.id, 1)}
-                  className="flex-1 h-10 rounded-xl hover:bg-white hover:text-green-600 hover:shadow-sm"
-                >
-                  +
-                </Button>
-                <div className="w-px h-6 bg-stone-200" />
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  onClick={() => deleteItem(item.id)}
-                  className="h-10 w-10 text-stone-300 hover:text-red-600"
-                >
-                  <Trash2 size={16} />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                
+                <div className="flex items-center gap-2 p-1.5 bg-stone-100 rounded-[1.25rem] border border-stone-200">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => updateStock(item.id, -1)}
+                    className="flex-1 h-11 rounded-xl bg-white shadow-sm hover:text-red-600 hover:shadow-md transition-all active:scale-95"
+                  >
+                    <span className="text-xl font-black">−</span>
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => updateStock(item.id, 1)}
+                    className="flex-1 h-11 rounded-xl bg-white shadow-sm hover:text-green-600 hover:shadow-md transition-all active:scale-95"
+                  >
+                    <span className="text-xl font-black">+</span>
+                  </Button>
+                  <div className="w-px h-6 bg-stone-300 mx-1" />
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={() => deleteItem(item.id)}
+                    className="h-11 w-11 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                  >
+                    <Trash2 size={18} />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

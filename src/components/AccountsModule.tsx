@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -11,7 +11,7 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 
-export default function AccountsModule({ action, onActionComplete }: { action?: string | null, onActionComplete?: () => void }) {
+export default function AccountsModule({ action, onActionComplete, profile }: { action?: string | null, onActionComplete?: () => void, profile?: any }) {
   const [expenses, setExpenses] = useState<any[]>([]);
   const [sales, setSales] = useState<any[]>([]);
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -30,21 +30,41 @@ export default function AccountsModule({ action, onActionComplete }: { action?: 
   });
 
   useEffect(() => {
-    const unsubExp = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc')), (snap) => {
-      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubSales = onSnapshot(collection(db, 'sales'), (snap) => {
+    if (!profile) return;
+
+    const unsubExp = onSnapshot(query(collection(db, 'expenses'), where('ownerId', '==', profile.uid)), (snap) => {
+      const sortedExpenses = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setExpenses(sortedExpenses);
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'expenses'));
+    const unsubSales = onSnapshot(query(collection(db, 'sales'), where('ownerId', '==', profile.uid)), (snap) => {
       setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'sales'));
     return () => { unsubExp(); unsubSales(); };
-  }, []);
+  }, [profile]);
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to record expenses.");
+        return;
+      }
       await addDoc(collection(db, 'expenses'), {
         ...newExpense,
+        ownerId: profile?.uid || 'unknown',
         createdAt: new Date().toISOString()
+      });
+      // Log activity
+      await addDoc(collection(db, 'activity_logs'), {
+        type: 'new_expense',
+        category: newExpense.category,
+        amount: newExpense.amount,
+        ownerId: profile?.uid || 'unknown',
+        timestamp: new Date().toISOString(),
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
       setIsAddExpenseOpen(false);
       setNewExpense({ category: 'Feed', amount: 0, description: '', date: format(new Date(), 'yyyy-MM-dd') });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, limit, doc, getDoc, updateDoc, increment, getDocs, where, writeBatch } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -13,6 +13,15 @@ import { shopUtils } from '../lib/shopUtils';
 import 'jspdf-autotable';
 import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
+
+const UNIT_FACTORS: Record<string, number> = {
+  'kg': 1,
+  'gram': 0.001,
+  'quintal': 100,
+  'pcs': 1,
+  'egg': 1,
+  'set': 1
+};
 
 export default function ShopModule({ action, onActionComplete, profile }: { action?: string | null, onActionComplete?: () => void, profile?: any }) {
   const { t } = useTranslation();
@@ -41,8 +50,8 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   const [itemInput, setItemInput] = useState({
     name: '',
     itemId: '',
-    quantity: 1,
-    price: 0,
+    quantity: '' as any,
+    price: '' as any,
     unit: 'kg'
   });
   const [printerSize, setPrinterSize] = useState<'standard' | '3inch' | '4inch'>('standard');
@@ -54,32 +63,54 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   };
 
   useEffect(() => {
-    const qSales = query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(10));
+    if (!profile) return;
+
+    const qSales = query(collection(db, 'sales'), where('ownerId', '==', profile.uid), limit(10));
     const unsubSales = onSnapshot(qSales, (snap) => {
-      setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const sortedSales = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setSales(sortedSales);
     }, (err) => handleFirestoreError(err, OperationType.GET, 'sales'));
 
-    const qInv = query(collection(db, 'inventory'));
+    const qInv = query(collection(db, 'inventory'), where('ownerId', '==', profile.uid));
     const unsubInv = onSnapshot(qInv, (snap) => {
       setInventoryItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'inventory'));
 
     return () => { unsubSales(); unsubInv(); };
-  }, []);
+  }, [profile]);
 
   const addToCart = () => {
-    if (!itemInput.itemId || itemInput.quantity <= 0) return;
+    if (!itemInput.itemId || !itemInput.quantity || !itemInput.price) return;
+    
+    const qty = Number(itemInput.quantity);
+    const price = Number(itemInput.price);
+    
     const invItem = inventoryItems.find(i => i.id === itemInput.itemId);
     if (!invItem) return;
 
-    if (itemInput.quantity > invItem.quantity) {
+    const inputFactor = UNIT_FACTORS[itemInput.unit.toLowerCase()] || 1;
+    const baseFactor = UNIT_FACTORS[invItem.unit.toLowerCase()] || 1;
+    const baseQuantity = qty * (inputFactor / baseFactor);
+
+    if (baseQuantity > invItem.quantity) {
       alert(t('insufficient_stock', { count: invItem.quantity, unit: invItem.unit }));
       return;
     }
 
-    const total = itemInput.quantity * itemInput.price;
-    setCart([...cart, { ...itemInput, total, id: Date.now(), originalItem: invItem }]);
-    setItemInput({ name: '', itemId: '', quantity: 1, price: 0, unit: 'kg' });
+    const total = Number((baseQuantity * price).toFixed(2));
+    setCart([...cart, { 
+      ...itemInput, 
+      quantity: baseQuantity,
+      displayQuantity: qty,
+      displayUnit: itemInput.unit,
+      price: price,
+      total, 
+      id: Date.now(), 
+      originalItem: invItem 
+    }]);
+    setItemInput({ name: '', itemId: '', quantity: '' as any, price: '' as any, unit: 'kg' });
   };
 
   const removeFromCart = (id: number) => {
@@ -100,9 +131,9 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   };
 
   const handleSearchCustomer = async () => {
-    if (!searchPhone) return;
+    if (!searchPhone || !profile) return;
     try {
-      const q = query(collection(db, 'customers'), where('phone', '==', searchPhone));
+      const q = query(collection(db, 'customers'), where('ownerId', '==', profile.uid), where('phone', '==', searchPhone));
       const snap = await getDocs(q);
       if (!snap.empty) {
         const found = snap.docs[0];
@@ -119,8 +150,13 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to register customers.");
+        return;
+      }
       const docRef = await addDoc(collection(db, 'customers'), {
         ...newCust,
+        ownerId: profile?.uid || 'unknown',
         creditBalance: 0,
         createdAt: new Date().toISOString()
       });
@@ -135,22 +171,30 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   const completeSale = async (paymentStatus: 'paid' | 'credit') => {
     if (cart.length === 0) return;
 
-    const invoiceNo = `INV-${Date.now().toString().slice(-6)}`;
-    const saleData = {
-      invoiceNo,
-      items: cart,
-      cartTotal,
-      taxableAmount,
-      gstAmount,
-      total: finalTotal,
-      paymentStatus,
-      customerId: selectedCustomer?.id || 'guest',
-      customerName: selectedCustomer?.name || 'Guest',
-      customerPhone: selectedCustomer?.phone || '',
-      timestamp: new Date().toISOString()
-    };
-
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to complete sales.");
+        return;
+      }
+      if (!profile) {
+        alert("Please wait for profile to load.");
+        return;
+      }
+      const invoiceNo = `INV-${Date.now().toString().slice(-6)}`;
+      const saleData: any = {
+        invoiceNo,
+        items: cart,
+        cartTotal,
+        taxableAmount,
+        gstAmount,
+        total: finalTotal,
+        paymentStatus,
+        customerId: selectedCustomer?.id || 'guest',
+        customerName: selectedCustomer?.name || 'Guest',
+        customerPhone: selectedCustomer?.phone || '',
+        ownerId: profile?.uid || 'unknown',
+        timestamp: new Date().toISOString()
+      };
       const batch = writeBatch(db);
 
       // Create Sale Record
@@ -180,9 +224,12 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
         type: 'new_sale',
         invoiceNo,
         amount: finalTotal,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
-        userId: 'system' 
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
+      console.log('PDF Generated');
 
       generatePDF({...saleData, total: finalTotal});
       setCart([]);
@@ -196,6 +243,10 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
   const cancelSale = async (sale: any) => {
     if (!confirm('Are you sure you want to cancel this sale? This will revert stock and credit.')) return;
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified.");
+        return;
+      }
       const batch = writeBatch(db);
       
       // Mark sale as cancelled
@@ -221,8 +272,10 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
         type: 'sale_cancelled',
         invoiceNo: sale.invoiceNo,
         amount: sale.total,
+        ownerId: profile?.uid || 'unknown',
         timestamp: new Date().toISOString(),
-        userId: 'system'
+        userId: profile?.uid || 'unknown',
+        userName: profile?.name || 'System'
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'cancel-sale');
@@ -250,7 +303,7 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
     doc.setFontSize(fontSizeBase);
     doc.text('Digwadih, Dhanbad, Jharkhand, 828113', centerX, level(22), { align: 'center' });
     doc.text('chiranjeev972@gmail.com', centerX, level(27), { align: 'center' });
-    doc.text(`Contact No: ${profile?.businessPhone || '6299327929'}`, centerX, level(32), { align: 'center' });
+    doc.text(`Contact No: ${profile?.businessPhone || '8987766981'}`, centerX, level(32), { align: 'center' });
     
     doc.setDrawColor(200);
     doc.line(margin, level(35), width - margin, level(35));
@@ -282,8 +335,8 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
       : [['S.No', 'Product Name', 'Qty', 'Rate', 'Disc', 'Tax%', 'Total']];
       
     const tableData = sale.items.map((item: any, idx: number) => isThermal 
-      ? [item.name, `${item.quantity} ${item.unit}`, item.price.toFixed(2), item.total.toFixed(2)]
-      : [idx + 1, item.name, `${item.quantity} ${item.unit}`, item.price.toFixed(2), '0', sale.gstAmount > 0 ? '5%' : '0%', item.total.toFixed(2)]
+      ? [item.name, `${item.displayQuantity || item.quantity} ${item.displayUnit || item.unit}`, item.price.toFixed(2), item.total.toFixed(2)]
+      : [idx + 1, item.name, `${item.displayQuantity || item.quantity} ${item.displayUnit || item.unit}`, item.price.toFixed(2), '0', sale.gstAmount > 0 ? '5%' : '0%', item.total.toFixed(2)]
     );
 
     doc.autoTable({
@@ -353,7 +406,7 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
     doc.text('VISIT AGAIN !', centerX, footY + 5, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(isThermal ? 6 : 7);
-    doc.text('Software By : TECHNIX INDIA PVT LTD. , +91 9905422245', centerX, footY + 10, { align: 'center' });
+    doc.text('Software By : C Vidya ChickMart , +91 8987766981', centerX, footY + 10, { align: 'center' });
 
     doc.save(`Invoice_${sale.invoiceNo}.pdf`);
   };
@@ -433,28 +486,28 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
 
             {/* Quick Select Buttons */}
             <div className="space-y-4">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {['all', 'bird', 'chicken', 'feed', 'other'].map(cat => (
                   <Button 
                     key={cat} 
                     variant={selectedCategory === cat ? 'default' : 'outline'}
                     size="xs"
-                    className="rounded-full px-4 capitalize"
+                    className="rounded-full px-4 capitalize h-8"
                     onClick={() => setSelectedCategory(cat)}
                   >
                     {cat}
                   </Button>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto pr-2 custom-scrollbar">
                 {inventoryItems
                   .filter(item => selectedCategory === 'all' || item.type.toLowerCase().includes(selectedCategory))
-                  .slice(0, 6).map(item => (
+                  .map(item => (
                 <Button 
                   key={item.id} 
                   variant="outline" 
                   size="sm" 
-                  className="rounded-full px-4 h-9 bg-white border-stone-200 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600 transition-all font-medium text-xs"
+                  className="rounded-full px-4 h-9 bg-white border-stone-200 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600 transition-all font-medium text-xs flex-shrink-0"
                   onClick={() => {
                     setItemInput({
                       ...itemInput,
@@ -507,41 +560,68 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
                 <div className="relative">
                   <Input 
                     type="number" 
-                    className="rounded-xl pr-10" 
+                    step="0.001"
+                    placeholder="0.000"
+                    className="rounded-xl pr-20" 
                     value={itemInput.quantity} 
-                    onChange={e => setItemInput({...itemInput, quantity: Number(e.target.value)})}
+                    onChange={e => setItemInput({...itemInput, quantity: e.target.value})}
                   />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-stone-400">{itemInput.unit}</span>
+                  <select 
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 rounded-lg border-none bg-stone-100 px-2 text-[10px] font-bold outline-none cursor-pointer"
+                    value={itemInput.unit}
+                    onChange={e => setItemInput({...itemInput, unit: e.target.value})}
+                  >
+                    <option value="kg">KG</option>
+                    <option value="gram">GRAM</option>
+                    <option value="quintal">QUINTAL</option>
+                    <option value="pcs">PCS</option>
+                    <option value="egg">EGG</option>
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold uppercase text-stone-400 mb-1 block">{t('price')}</label>
                 <Input 
                   type="number" 
+                  step="0.01"
+                  placeholder="0.00"
                   className="rounded-xl" 
                   value={itemInput.price} 
-                  onChange={e => setItemInput({...itemInput, price: Number(e.target.value)})}
+                  onChange={e => setItemInput({...itemInput, price: e.target.value})}
                 />
               </div>
-              <div className="flex items-end">
-                <Button onClick={addToCart} disabled={!itemInput.itemId} className="w-full rounded-xl bg-orange-600 text-white hover:bg-orange-700">{t('add') || 'Add'}</Button>
+              <div className="flex flex-col justify-end">
+                {itemInput.itemId && itemInput.quantity && itemInput.price && (
+                  <div className="text-[10px] font-bold text-orange-600 mb-1 ml-1">
+                    Subtotal: ₹{(() => {
+                      const qty = Number(itemInput.quantity);
+                      const price = Number(itemInput.price);
+                      const inputFactor = UNIT_FACTORS[itemInput.unit.toLowerCase()] || 1;
+                      const invItem = inventoryItems.find(i => i.id === itemInput.itemId);
+                      const baseFactor = invItem ? (UNIT_FACTORS[invItem.unit.toLowerCase()] || 1) : 1;
+                      const baseQty = qty * (inputFactor / baseFactor);
+                      return (baseQty * price).toFixed(2);
+                    })()}
+                  </div>
+                )}
+                <Button onClick={addToCart} disabled={!itemInput.itemId} className="w-full rounded-xl bg-orange-600 text-white hover:bg-orange-700 h-10">{t('add') || 'Add'}</Button>
               </div>
             </div>
 
             {/* Discount & GST Controls */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex items-center gap-4 p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
                 <div className="flex items-center gap-2 text-orange-600 font-bold text-xs uppercase tracking-widest whitespace-nowrap">
                   <Printer size={16} />
-                  Printer Size
+                  Printer
                 </div>
-                <div className="flex gap-2 flex-1">
+                <div className="flex flex-wrap gap-2 flex-1">
                   {['standard', '3inch', '4inch'].map(size => (
                     <Button 
                       key={size}
                       variant={printerSize === size ? 'default' : 'outline'}
                       size="xs"
-                      className="rounded-full px-4 capitalize h-8"
+                      className="rounded-full px-3 capitalize h-8 text-[10px]"
                       onClick={() => setPrinterSize(size as any)}
                     >
                       {size}
@@ -568,38 +648,40 @@ export default function ShopModule({ action, onActionComplete, profile }: { acti
             </div>
 
             {/* Cart Table */}
-            <div className="border rounded-2xl overflow-hidden">
-              <Table>
-                <TableHeader className="bg-stone-50">
-                  <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Price</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cart.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.quantity} {item.unit}</TableCell>
-                      <TableCell>₹{item.price}</TableCell>
-                      <TableCell className="font-bold">₹{item.total}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" onClick={() => removeFromCart(item.id)} className="text-stone-400 hover:text-red-600">
-                          <Trash2 size={16} />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {cart.length === 0 && (
+            <div className="border rounded-2xl overflow-hidden overflow-x-auto">
+              <div className="min-w-[500px]">
+                <Table>
+                  <TableHeader className="bg-stone-50">
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-stone-400">Cart is empty</TableCell>
+                      <TableHead>Item</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead></TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {cart.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-medium">{item.name}</TableCell>
+                        <TableCell>{item.displayQuantity || item.quantity} {item.displayUnit || item.unit}</TableCell>
+                        <TableCell>₹{item.price}</TableCell>
+                        <TableCell className="font-bold">₹{item.total.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon" onClick={() => removeFromCart(item.id)} className="text-stone-400 hover:text-red-600">
+                            <Trash2 size={16} />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {cart.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8 text-stone-400">Cart is empty</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </CardContent>
         </Card>

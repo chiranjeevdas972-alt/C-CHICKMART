@@ -4,19 +4,20 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { BrainCircuit, Sparkles, Loader2, TrendingUp, ShieldAlert } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, limit, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, limit, orderBy, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
 
-export default function AIInsights() {
+export default function AIInsights({ profile }: { profile: any }) {
   const [loading, setLoading] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
 
   const generateInsights = async () => {
     setLoading(true);
     try {
+      if (!profile) return;
       // Fetch some context data
-      const invSnap = await getDocs(collection(db, 'inventory'));
-      const logsSnap = await getDocs(query(collection(db, 'farmlogs'), orderBy('timestamp', 'desc'), limit(10)));
+      const invSnap = await getDocs(query(collection(db, 'inventory'), where('ownerId', '==', profile.uid)));
+      const logsSnap = await getDocs(query(collection(db, 'farmlogs'), where('ownerId', '==', profile.uid), orderBy('timestamp', 'desc'), limit(10)));
       
       const inventory = invSnap.docs.map(d => d.data());
       const logs = logsSnap.docs.map(d => d.data());

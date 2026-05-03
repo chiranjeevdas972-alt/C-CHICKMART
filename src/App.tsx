@@ -5,7 +5,11 @@ import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import LandingPage from './components/LandingPage';
 import Dashboard from './components/Dashboard';
 import PaymentModule from './components/PaymentModule';
-import { Loader2, Globe } from 'lucide-react';
+import AuthModule from './components/AuthModule';
+import VerifyOtp from './components/VerifyOtp';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AnimatePresence } from 'motion/react';
+import { Loader2, Globe, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './components/ui/button';
 
@@ -15,6 +19,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [trialExpired, setTrialExpired] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showAuth, setShowAuth] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
   const { i18n, t } = useTranslation();
 
   const [selectedPlan, setSelectedPlan] = useState<{ name: string, price: number } | null>(null);
@@ -27,68 +33,162 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      // Online listener
-      const handleStatusChange = () => setIsOnline(navigator.onLine);
-      window.addEventListener('online', handleStatusChange);
-      window.addEventListener('offline', handleStatusChange);
-      
+    let unsubProfile: (() => void) | null = null;
+    let verificationCheckInterval: any = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Use real-time snapshot for profile
+        // High-priority: Refresh token and reload to ensure latest session state
+        try {
+          await firebaseUser.reload();
+          await firebaseUser.getIdToken(true);
+          console.log("Auth State Refreshed:", firebaseUser.uid);
+          console.log("Is Email Verified:", firebaseUser.emailVerified);
+          console.log("Provider ID:", firebaseUser.providerData[0]?.providerId);
+        } catch (refreshErr) {
+          console.error("Auth refresh failed on state change", refreshErr);
+        }
+      }
+
+      setUser(auth.currentUser);
+      
+      if (!auth.currentUser) {
+        setOtpVerified(false);
+        if (verificationCheckInterval) clearInterval(verificationCheckInterval);
+      } else {
+        const currentUser = auth.currentUser;
+        
+        // Robust Google User Detection with safety
+        let isGoogleUser = false;
+        try {
+          const idTokenResult = await currentUser.getIdTokenResult(true);
+          isGoogleUser = 
+            idTokenResult.signInProvider === 'google.com' || 
+            currentUser.providerData.some(p => p.providerId === 'google.com');
+          
+          console.log("Auth Provider Detection:", idTokenResult.signInProvider);
+          console.log("Is Google User:", isGoogleUser);
+        } catch (tokenErr) {
+          console.error("Failed to get ID token result", tokenErr);
+          // Fallback to providerData check
+          isGoogleUser = currentUser.providerData.some(p => p.providerId === 'google.com');
+        }
+
+        const isOwner = currentUser.email === 'cvidyalibrary32@gmail.com';
+        if (isGoogleUser || isOwner) {
+          setOtpVerified(true);
+        }
+        
+        // Start polling for email verification if not verified and NOT Google user
+        if (!currentUser.emailVerified && !isGoogleUser) {
+          if (verificationCheckInterval) clearInterval(verificationCheckInterval);
+          verificationCheckInterval = setInterval(async () => {
+             const pollingUser = auth.currentUser;
+             if (pollingUser && !pollingUser.emailVerified) {
+               try {
+                 await pollingUser.reload();
+                 if (pollingUser.emailVerified) {
+                   setUser({...pollingUser}); // Trigger re-render
+                   clearInterval(verificationCheckInterval);
+                 }
+               } catch (pollErr) {
+                 console.error("Verification poll reload failed", pollErr);
+               }
+             }
+          }, 5000);
+        }
+      }
+      
+      if (unsubProfile) {
+        unsubProfile();
+        unsubProfile = null;
+      }
+
+      if (firebaseUser) {
         const userRef = doc(db, 'users', firebaseUser.uid);
-        const unsubProfile = onSnapshot(userRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            // If we just paid, ensure the subscription is updated
-            if (paymentDone && selectedPlan && data.subscriptionType !== selectedPlan.name.toLowerCase()) {
-              await setDoc(userRef, { 
-                ...data, 
-                subscriptionType: selectedPlan.name.toLowerCase(),
-                paymentDate: new Date().toISOString()
-              }, { merge: true });
-              setPaymentDone(false);
-              setSelectedPlan(null);
+        
+        // Initial check if document exists
+        try {
+          const docSnap = await getDoc(userRef);
+          
+          if (!docSnap.exists()) {
+            // Determine role: software owner check
+            const isOwner = firebaseUser.email === 'cvidyalibrary32@gmail.com';
+            let role = isOwner ? 'admin' : 'user';
+            
+            if (!isOwner) {
+              try {
+                const { getDocs, query, collection, limit } = await import('firebase/firestore');
+                const usersQuery = query(collection(db, 'users'), limit(1));
+                const usersSnap = await getDocs(usersQuery);
+                if (usersSnap.empty) {
+                  role = 'admin';
+                }
+              } catch (err) {
+                console.warn("Could not check other users, defaulting to user role", err);
+              }
             }
-            setProfile(data);
-          } else {
-            const planToSet = (paymentDone && selectedPlan) ? selectedPlan.name.toLowerCase() : 'trial';
+
+            const isGoogleUserInitial = firebaseUser.providerData.some(p => p.providerId === 'google.com');
+
             const newProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              role: 'admin',
+              displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0],
+              role: role,
+              isOtpVerified: isGoogleUserInitial || isOwner,
               farmIds: [],
               shopIds: [],
               createdAt: new Date().toISOString(),
-              subscriptionType: planToSet,
-              trialStartDate: planToSet === 'trial' ? new Date().toISOString() : null,
+              subscriptionType: isOwner ? 'pro' : 'trial',
+              trialStartDate: new Date().toISOString(),
               businessName: 'ChickMart',
               businessAddress: 'Digwadih, Dhanbad, Jharkhand, 828113',
-              businessEmail: 'chiranjeev972@gmail.com',
-              businessPhone: '6299327929'
+              businessEmail: firebaseUser.email || 'contact@chickmart.app',
+              businessPhone: '8987766981'
             };
             await setDoc(userRef, newProfile);
             setProfile(newProfile);
-            if (paymentDone) {
-              setPaymentDone(false);
-              setSelectedPlan(null);
-            }
           }
+
+          // Subscribe to profile changes
+          unsubProfile = onSnapshot(userRef, (snap) => {
+            if (snap.exists()) {
+              const profileData = snap.data();
+              setProfile(profileData);
+              
+              // If profile says OTP is verified, update the state
+              if (profileData.isOtpVerified) {
+                setOtpVerified(true);
+              }
+            }
+            setLoading(false);
+          }, (err) => {
+            console.error("Profile snapshot error", err);
+            setLoading(false);
+          });
+        } catch (err) {
+          console.error("Error initializing profile", err);
           setLoading(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-          setLoading(false);
-        });
-        return () => unsubProfile();
+        }
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
 
-    return () => unsubscribe();
-  }, [paymentDone, selectedPlan]);
+    // Online listeners should be added once on mount
+    const handleStatusChange = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', handleStatusChange);
+    window.addEventListener('offline', handleStatusChange);
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubProfile) unsubProfile();
+      window.removeEventListener('online', handleStatusChange);
+      window.removeEventListener('offline', handleStatusChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (profile?.subscriptionType === 'trial' && profile?.trialStartDate) {
@@ -109,9 +209,21 @@ export default function App() {
     setShowPayment(true);
   };
 
-  const handlePaymentComplete = () => {
+  const handlePaymentComplete = async () => {
+    if (user && selectedPlan) {
+      const userRef = doc(db, 'users', user.uid);
+      try {
+        await setDoc(userRef, { 
+          subscriptionType: selectedPlan.name.toLowerCase(),
+          paymentDate: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+      }
+    }
     setPaymentDone(true);
     setShowPayment(false);
+    setSelectedPlan(null);
     if (!user) {
       handleLogin();
     }
@@ -133,6 +245,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
+      setOtpVerified(false);
     } catch (error) {
       console.error('Logout failed', error);
     }
@@ -165,6 +278,29 @@ export default function App() {
           <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
         </div>
       )}
+
+      {user && !user.emailVerified && !otpVerified && !user.providerData.some(p => p.providerId === 'google.com') && (
+        <div className="bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest py-2 px-4 flex justify-between items-center z-[100] shrink-0">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={14} />
+            <span>Email Not Verified • You cannot save data until verified. Check your inbox for a verification link.</span>
+          </div>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-white hover:bg-red-700 h-6 px-3 text-[9px] font-black border border-white/20 rounded-full"
+            onClick={() => {
+              import('firebase/auth').then(({ sendEmailVerification }) => {
+                if (user) {
+                  sendEmailVerification(user).then(() => alert('Verification email sent!'));
+                }
+              });
+            }}
+          >
+            RESEND LINK
+          </Button>
+        </div>
+      )}
       
       <div className="fixed top-4 right-4 z-50">
         <Button variant="outline" size="sm" onClick={toggleLanguage} className="bg-white/80 backdrop-blur shadow-sm rounded-full gap-2">
@@ -173,27 +309,44 @@ export default function App() {
         </Button>
       </div>
       {!user ? (
-        <LandingPage onLogin={handleLogin} onPlanSelect={handlePlanSelect} />
-      ) : trialExpired ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mb-6">
-            <Globe className="text-orange-600 h-10 w-10" />
-          </div>
-          <h2 className="text-3xl font-black mb-4">Trial Plan Expired</h2>
-          <p className="text-stone-500 max-w-md mb-8">
-            Your 7-day free trial has ended. Please upgrade to a Standard or Professional plan to continue managing your poultry business.
-          </p>
-          <div className="flex gap-4">
-            <Button onClick={handleLogout} variant="outline" className="h-14 px-8 rounded-2xl font-bold">
-              Logout
-            </Button>
-            <Button onClick={() => handlePlanSelect({ name: 'Standard', price: 499 })} className="h-14 px-10 rounded-2xl bg-orange-600 text-white font-bold shadow-lg shadow-orange-100">
-              Upgrade Now
-            </Button>
-          </div>
-        </div>
+        <>
+          <LandingPage onLogin={() => setShowAuth(true)} onPlanSelect={handlePlanSelect} />
+          <AnimatePresence>
+            {showAuth && (
+              <AuthModule onClose={() => setShowAuth(false)} />
+            )}
+          </AnimatePresence>
+        </>
       ) : (
-        <Dashboard user={user} profile={profile} onLogout={handleLogout} />
+        <ProtectedRoute
+          user={user}
+          profile={profile}
+          otpVerified={otpVerified}
+          onOtpVerified={() => setOtpVerified(true)}
+          onLogout={handleLogout}
+        >
+          {trialExpired ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+              <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mb-6">
+                <Globe className="text-orange-600 h-10 w-10" />
+              </div>
+              <h2 className="text-3xl font-black mb-4">Trial Plan Expired</h2>
+              <p className="text-stone-500 max-w-md mb-8">
+                Your 7-day free trial has ended. Please upgrade to a Standard or Professional plan to continue managing your poultry business.
+              </p>
+              <div className="flex gap-4">
+                <Button onClick={handleLogout} variant="outline" className="h-14 px-8 rounded-2xl font-bold">
+                  Logout
+                </Button>
+                <Button onClick={() => handlePlanSelect({ name: 'Standard', price: 499 })} className="h-14 px-10 rounded-2xl bg-orange-600 text-white font-bold shadow-lg shadow-orange-100">
+                  Upgrade Now
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Dashboard user={user} profile={profile} onLogout={handleLogout} />
+          )}
+        </ProtectedRoute>
       )}
     </div>
   );

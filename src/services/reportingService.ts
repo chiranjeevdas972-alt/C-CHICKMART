@@ -3,15 +3,17 @@ import { db } from '../lib/firebase';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 
 export const reportingService = {
-  async getProfitLoss(startDate: Date, endDate: Date) {
+  async getProfitLoss(userId: string, startDate: Date, endDate: Date) {
     const qSales = query(
       collection(db, 'sales'),
+      where('ownerId', '==', userId),
       where('timestamp', '>=', startDate.toISOString()),
       where('timestamp', '<=', endDate.toISOString())
     );
     
     const qExpenses = query(
       collection(db, 'expenses'),
+      where('ownerId', '==', userId),
       where('date', '>=', startDate.toISOString().split('T')[0]),
       where('date', '<=', endDate.toISOString().split('T')[0])
     );
@@ -32,8 +34,9 @@ export const reportingService = {
     };
   },
 
-  async getTopProducts(limitCount = 5) {
-    const salesSnap = await getDocs(collection(db, 'sales'));
+  async getTopProducts(userId: string, limitCount = 5) {
+    const q = query(collection(db, 'sales'), where('ownerId', '==', userId));
+    const salesSnap = await getDocs(q);
     const productCounts: Record<string, { name: string, quantity: number, revenue: number }> = {};
 
     salesSnap.docs.forEach(doc => {

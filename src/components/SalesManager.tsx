@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, ensureVerified } from '../lib/firebase';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { ShoppingCart, ReceiptText, DollarSign } from 'lucide-react';
 
-export default function SalesManager() {
+export default function SalesManager({ profile }: { profile: any }) {
   const [sales, setSales] = useState<any[]>([]);
   const [newSale, setNewSale] = useState({
     item: '',
@@ -17,21 +17,33 @@ export default function SalesManager() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(50));
+    if (!profile) return;
+    const q = query(
+      collection(db, 'sales'), 
+      where('ownerId', '==', profile.uid),
+      orderBy('timestamp', 'desc'), 
+      limit(50)
+    );
     const unsub = onSnapshot(q, (snapshot) => {
       setSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'sales'));
     return () => unsub();
-  }, []);
+  }, [profile]);
 
   const handleSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSale.item || newSale.quantity <= 0 || newSale.price <= 0) return;
+    if (!newSale.item || newSale.quantity <= 0 || newSale.price <= 0 || !profile) return;
     
     const total = newSale.quantity * newSale.price;
     try {
+      if (!(await ensureVerified())) {
+        alert("Action blocked. Your email is not verified. Please verify your email to record sales.");
+        return;
+      }
+
       await addDoc(collection(db, 'sales'), {
         ...newSale,
+        ownerId: profile.uid,
         total,
         timestamp: new Date().toISOString()
       });

@@ -1,103 +1,111 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // users, farms, batches, inventory, sales, expenses, customers, orders, farmlogs
-    // ===============================================================
-
-    // Helper Functions
-    function isAuthenticated() {
-      return request.auth != null;
+    // 0. Global Safety Net - Default Deny
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+    
+    function isVerifiedEmailUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isGoogleUser() {
+      return isSignedIn() && request.auth.token.firebase.sign_in_provider == "google.com";
     }
 
     function isAdmin() {
-      return isAuthenticated() && (
-        getUserData().role == 'admin' ||
-        (request.auth.token.email == "chiranjeevdas972@gmail.com" && request.auth.token.email_verified == true)
-      );
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin';
     }
 
-    function isManager() {
-      return isAuthenticated() && getUserData().role == 'manager';
+    // 1. User profiles
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.email.size() < 256;
     }
 
-    function isStaff() {
-      return isAuthenticated() && getUserData().role == 'staff';
-    }
-
-    function hasAccess() {
-      return isAuthenticated() && (isAdmin() || isManager() || isStaff());
-    }
-
-    // Validation Helpers
-    function isValidTimestamp(ts) {
-      return ts is string && ts.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
-    }
-
-    // Rules
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
     }
 
+    // 2. OTP Management - Allow unverified users to write their own OTP
+    function isValidOTP(data) {
+      // Must match UI/Service expectations
+      return data.keys().hasAll(['otp', 'email', 'createdAt', 'expiresAt', 'verified', 'attempts']) &&
+             data.otp is string && data.otp.size() == 6 &&
+             data.email is string &&
+             data.verified is bool;
+    }
+
+    match /emailOtps/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // 3. Other Collections (Production Safe)
     match /farms/{farmId} {
-      allow read: if hasAccess();
-      allow write: if isAdmin();
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
     }
 
-    match /batches/{batchId} {
-      allow read: if hasAccess();
-      allow write: if hasAccess();
-    }
-
-    match /farmlogs/{logId} {
-      allow read, write: if hasAccess();
+    match /shops/{shopId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
     }
 
     match /inventory/{itemId} {
-      allow read: if hasAccess();
-      allow write: if hasAccess();
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
     }
 
-    match /sales/{saleId} {
-      allow read: if hasAccess();
-      allow create: if hasAccess();
-      allow update, delete: if isAdmin();
+    match /farmLogs/{logId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
     }
-
-    match /expenses/{expenseId} {
-      allow read: if hasAccess();
-      allow write: if isAdmin() || isManager();
-    }
-
-    match /customers/{customerId} {
-      allow read: if hasAccess();
-      allow write: if hasAccess();
-    }
-
-    match /orders/{orderId} {
-      allow read: if hasAccess();
-      allow write: if hasAccess();
-    }
-
+    
     match /notifications/{notifId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if hasAccess();
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isSignedIn();
     }
 
-    match /activity_logs/{logId} {
-      allow read: if isAdmin() || isManager();
-      allow create: if hasAccess();
+    match /activity/{activityId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+    
+    match /sales/{saleId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
+    }
+    
+    match /customers/{customerId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isGoogleUser() || isVerifiedEmailUser() || isAdmin());
     }
   }
 }
