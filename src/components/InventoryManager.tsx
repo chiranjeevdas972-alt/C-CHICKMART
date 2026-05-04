@@ -129,19 +129,21 @@ export default function InventoryManager({ profile }: { profile: any }) {
           <TableBody>
             {items.map((item) => {
               const getImageForType = (type: string) => {
-                switch(type) {
-                  case 'hen': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=80&w=100';
-                  case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=80&w=100';
-                  case 'duck': return 'https://images.unsplash.com/photo-1555854817-40e071d01597?auto=format&fit=crop&q=80&w=100';
+                const t = (type || '').toLowerCase();
+                switch(t) {
+                  case 'duck': return 'https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99?auto=format&fit=crop&q=60&w=100';
                   case 'egg': 
-                  case 'eggs': return 'https://images.unsplash.com/photo-1587486913049-53fe8c17f16d?auto=format&fit=crop&q=80&w=100';
+                  case 'eggs': return 'https://images.unsplash.com/photo-1587486913049-53fc88980cfc?auto=format&fit=crop&q=60&w=100';
+                  case 'hen':
+                  case 'chicken':
                   case 'bird':
-                  case 'live_bird': return 'https://images.unsplash.com/photo-1628155930542-3c7a64e2c833?auto=format&fit=crop&q=80&w=100';
+                  case 'live_bird': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=60&w=100';
+                  case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=60&w=100';
+                  case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=60&w=100';
                   case 'dressed_chicken': 
-                  case 'meat': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=80&w=100';
-                  case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=80&w=100';
-                  case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=100';
-                  default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=80&w=100';
+                  case 'meat': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=60&w=100';
+                  case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=60&w=100';
+                  default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=60&w=100';
                 }
               };
 

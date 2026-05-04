@@ -64,12 +64,12 @@ export default function LandingPage({ onLogin, onPlanSelect }: LandingPageProps)
 
   const plans = [
     {
-      name: "Free Trial",
+      name: "Basic Plan",
       price: "0",
-      duration: "7 Days",
-      desc: "Explore all basic features to see how ChickMart works.",
+      duration: "Standard",
+      desc: "Start managing your farm with basic essential tools.",
       features: ["Single Batch Management", "Basic POS Invoicing", "Email Support", "Daily Mortality Log"],
-      button: "Start Free Trial",
+      button: "Get Started",
       popular: false
     },
     {

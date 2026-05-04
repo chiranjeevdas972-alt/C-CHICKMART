@@ -246,22 +246,26 @@ export default function InventoryModule({ profile }: { profile?: any }) {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {items.map((item) => {
           const getImageForType = (type: string) => {
-            switch(type) {
-              case 'hen': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=80&w=400';
-              case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=80&w=400';
-              case 'duck': return 'https://images.unsplash.com/photo-1555854817-40e071d01597?auto=format&fit=crop&q=80&w=400';
-              case 'egg': return 'https://images.unsplash.com/photo-1587486913049-53fe8c17f16d?auto=format&fit=crop&q=80&w=400';
-              case 'live_bird': return 'https://images.unsplash.com/photo-1628155930542-3c7a64e2c833?auto=format&fit=crop&q=80&w=400';
-              case 'dressed_chicken': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=80&w=400';
-              case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=80&w=400';
-              case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=400';
-              default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=80&w=400';
+            const t = (type || '').toLowerCase();
+            switch(t) {
+              case 'duck': return 'https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99?auto=format&fit=crop&q=60&w=400'; 
+              case 'egg':
+              case 'eggs': return 'https://images.unsplash.com/photo-1587486913049-53fc88980cfc?auto=format&fit=crop&q=60&w=400';
+              case 'hen':
+              case 'chicken':
+              case 'live_bird': return 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&q=60&w=400';
+              case 'goat': return 'https://images.unsplash.com/photo-1524024973431-2ad916746881?auto=format&fit=crop&q=60&w=400';
+              case 'feed': return 'https://images.unsplash.com/photo-1516466723877-e4ec1d736c8a?auto=format&fit=crop&q=60&w=400';
+              case 'dressed_chicken': 
+              case 'meat': return 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&q=60&w=400';
+              case 'medicine': return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=60&w=400';
+              default: return 'https://images.unsplash.com/photo-1586769852044-692d6e67638d?auto=format&fit=crop&q=60&w=400';
             }
           };
 
           return (
             <Card key={item.id} className="rounded-[2.5rem] border-stone-200 shadow-sm overflow-hidden flex flex-col group hover:shadow-xl transition-all duration-500 bg-white">
-              <div className="h-40 w-full overflow-hidden relative">
+              <div className="h-48 w-full overflow-hidden relative">
                 <img 
                   src={getImageForType(item.type)} 
                   alt={item.name}

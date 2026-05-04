@@ -6,16 +6,12 @@ export const reportingService = {
   async getProfitLoss(userId: string, startDate: Date, endDate: Date) {
     const qSales = query(
       collection(db, 'sales'),
-      where('ownerId', '==', userId),
-      where('timestamp', '>=', startDate.toISOString()),
-      where('timestamp', '<=', endDate.toISOString())
+      where('ownerId', '==', userId)
     );
     
     const qExpenses = query(
       collection(db, 'expenses'),
-      where('ownerId', '==', userId),
-      where('date', '>=', startDate.toISOString().split('T')[0]),
-      where('date', '<=', endDate.toISOString().split('T')[0])
+      where('ownerId', '==', userId)
     );
 
     const [salesSnap, expensesSnap] = await Promise.all([
@@ -23,8 +19,26 @@ export const reportingService = {
       getDocs(qExpenses)
     ]);
 
-    const totalSales = salesSnap.docs.reduce((sum, doc) => sum + (doc.data().total || 0), 0);
-    const totalExpenses = expensesSnap.docs.reduce((sum, doc) => sum + (doc.data().amount || 0), 0);
+    const startISO = startDate.toISOString();
+    const endISO = endDate.toISOString();
+    const startDay = startISO.split('T')[0];
+    const endDay = endISO.split('T')[0];
+
+    const totalSales = salesSnap.docs.reduce((sum, doc) => {
+      const data = doc.data();
+      if (data.timestamp >= startISO && data.timestamp <= endISO) {
+        return sum + (data.total || 0);
+      }
+      return sum;
+    }, 0);
+
+    const totalExpenses = expensesSnap.docs.reduce((sum, doc) => {
+      const data = doc.data();
+      if (data.date >= startDay && data.date <= endDay) {
+        return sum + (data.amount || 0);
+      }
+      return sum;
+    }, 0);
 
     return {
       revenue: totalSales,

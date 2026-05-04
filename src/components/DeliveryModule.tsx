@@ -14,15 +14,23 @@ export default function DeliveryModule({ profile }: { profile?: any }) {
 
   useEffect(() => {
     if (!profile) return;
-    const q = query(collection(db, 'sales'), where('ownerId', '==', profile.uid), orderBy('timestamp', 'desc'));
+    const q = query(collection(db, 'sales'), where('ownerId', '==', profile.uid));
     const unsub = onSnapshot(q, (snap) => {
       // For demo/system simulation, we assume some orders might need delivery
       // Real implementation would have a 'deliveryStatus' field
-      setOrders(snap.docs.map(d => ({ 
-        id: d.id, 
-        ...d.data(),
-        deliveryStatus: d.data().deliveryStatus || 'pending_assignment'
-      })));
+      const sortedDocs = snap.docs
+        .map(d => ({ 
+          id: d.id, 
+          ...d.data(),
+          deliveryStatus: d.data().deliveryStatus || 'pending_assignment'
+        }))
+        .sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeB - timeA; // Descending
+        });
+
+      setOrders(sortedDocs);
       setLoading(false);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'sales'));
 

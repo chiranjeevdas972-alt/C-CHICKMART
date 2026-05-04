@@ -207,6 +207,6 @@
     "/activity_logs/{logId}": { "schema": "ActivityLog", "description": "System activity logs" },
     "/notifications/{notifId}": { "schema": "Notification", "description": "User notifications" },
     "/inquiries/{inquiryId}": { "schema": "Inquiry", "description": "Lead inquiries" },
-    "/emailOtps/{uid}": { "schema": "EmailOtp", "description": "Email verification OTPs" }
+    "/otp_verification/{email}": { "schema": "EmailOtp", "description": "Email verification OTPs" }
   }
 }

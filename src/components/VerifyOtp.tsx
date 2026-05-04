@@ -52,7 +52,7 @@ export default function VerifyOtp({ userId, email, onVerified, onLogout }: Verif
       await refreshAuth();
       
       const newOtp = otpService.generateOTP();
-      await otpService.saveOTP(userId, email, newOtp);
+      await otpService.saveOTP(email, newOtp);
       await otpService.sendOTP(email, newOtp);
       setTimeLeft(30);
       setSuccess('A new OTP has been sent!');
@@ -87,7 +87,7 @@ export default function VerifyOtp({ userId, email, onVerified, onLogout }: Verif
     setLoading(true);
     setError('');
     try {
-      const result = await otpService.verifyOTP(userId, otp);
+      const result = await otpService.verifyOTP(email, otp);
       if (result.success) {
         // Update user profile in Firestore to mark as verified
         try {

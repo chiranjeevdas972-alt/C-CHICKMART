@@ -140,8 +140,8 @@ export default function App() {
               farmIds: [],
               shopIds: [],
               createdAt: new Date().toISOString(),
-              subscriptionType: isOwner ? 'pro' : 'trial',
-              trialStartDate: new Date().toISOString(),
+              subscriptionType: isOwner ? 'pro' : 'standard',
+              trialStartDate: null,
               businessName: 'ChickMart',
               businessAddress: 'Digwadih, Dhanbad, Jharkhand, 828113',
               businessEmail: firebaseUser.email || 'contact@chickmart.app',
@@ -191,22 +191,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (profile?.subscriptionType === 'trial' && profile?.trialStartDate) {
-      const startDate = new Date(profile.trialStartDate);
-      const now = new Date();
-      const diffTime = Math.abs(now.getTime() - startDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      if (diffDays > 7) {
-        setTrialExpired(true);
-      }
-    } else {
-      setTrialExpired(false);
-    }
+    // Trial logic disabled - all users gain access after verification
+    setTrialExpired(false);
   }, [profile]);
 
   const handlePlanSelect = (plan: { name: string, price: number }) => {
     setSelectedPlan(plan);
-    setShowPayment(true);
+    if (!user) {
+      setShowAuth(true);
+    } else {
+      setShowPayment(true);
+    }
   };
 
   const handlePaymentComplete = async () => {
@@ -215,7 +210,8 @@ export default function App() {
       try {
         await setDoc(userRef, { 
           subscriptionType: selectedPlan.name.toLowerCase(),
-          paymentDate: new Date().toISOString()
+          paymentDate: new Date().toISOString(),
+          trialStartDate: null // Clear trial if paid
         }, { merge: true });
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
@@ -224,10 +220,13 @@ export default function App() {
     setPaymentDone(true);
     setShowPayment(false);
     setSelectedPlan(null);
-    if (!user) {
-      handleLogin();
-    }
   };
+
+  useEffect(() => {
+    if (user && selectedPlan && !showPayment && !paymentDone) {
+      setShowPayment(true);
+    }
+  }, [user, selectedPlan, showPayment, paymentDone]);
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -325,27 +324,7 @@ export default function App() {
           onOtpVerified={() => setOtpVerified(true)}
           onLogout={handleLogout}
         >
-          {trialExpired ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mb-6">
-                <Globe className="text-orange-600 h-10 w-10" />
-              </div>
-              <h2 className="text-3xl font-black mb-4">Trial Plan Expired</h2>
-              <p className="text-stone-500 max-w-md mb-8">
-                Your 7-day free trial has ended. Please upgrade to a Standard or Professional plan to continue managing your poultry business.
-              </p>
-              <div className="flex gap-4">
-                <Button onClick={handleLogout} variant="outline" className="h-14 px-8 rounded-2xl font-bold">
-                  Logout
-                </Button>
-                <Button onClick={() => handlePlanSelect({ name: 'Standard', price: 499 })} className="h-14 px-10 rounded-2xl bg-orange-600 text-white font-bold shadow-lg shadow-orange-100">
-                  Upgrade Now
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Dashboard user={user} profile={profile} onLogout={handleLogout} />
-          )}
+          <Dashboard user={user} profile={profile} onLogout={handleLogout} onUpgrade={handlePlanSelect} />
         </ProtectedRoute>
       )}
     </div>

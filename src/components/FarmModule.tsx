@@ -232,7 +232,6 @@ export default function FarmModule({ action, onActionComplete, profile }: {
         <h3 className="text-xl font-bold flex items-center gap-2">
           <HenIcon className="text-orange-600" />
           Active Batches
-          {isTrial && <span className="text-[10px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Trial Limit: 1 Batch</span>}
         </h3>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           {profile?.subscriptionType === 'professional' && (

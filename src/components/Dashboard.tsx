@@ -23,6 +23,7 @@ interface DashboardProps {
   user: FirebaseUser;
   profile: any;
   onLogout: () => void;
+  onUpgrade: (plan: { name: string, price: number }) => void;
 }
 
 const HenIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -48,7 +49,7 @@ const HenIcon = ({ size = 24, className = "" }: { size?: number, className?: str
   </svg>
 );
 
-export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
+export default function Dashboard({ user, profile, onLogout, onUpgrade }: DashboardProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [moduleAction, setModuleAction] = useState<string | null>(null);
   const [isQuickActionOpen, setIsQuickActionOpen] = useState(false);
@@ -117,11 +118,11 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
     { id: 'inventory', label: t('inventory'), icon: <Package size={18} /> },
     { id: 'accounts', label: t('accounts'), icon: <Wallet size={18} /> },
     { id: 'customers', label: t('customers'), icon: <Users size={18} /> },
-    { id: 'delivery', label: 'Delivery', icon: <Truck size={18} />, hidden: profile?.subscriptionType === 'trial' },
-    { id: 'advanced_reports', label: 'Financials', icon: <FileText size={18} />, hidden: profile?.subscriptionType === 'trial' },
+    { id: 'delivery', label: 'Delivery', icon: <Truck size={18} /> },
+    { id: 'advanced_reports', label: 'Financials', icon: <FileText size={18} /> },
     { id: 'admin', label: 'Admin', icon: <ShieldCheck size={18} /> },
-    { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} />, hidden: profile?.subscriptionType === 'trial' },
-  ].filter(item => !item.hidden);
+    { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} /> },
+  ];
 
   const handleTabChange = (id: string) => {
     setActiveTab(id);
@@ -183,13 +184,15 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
               <div className="flex items-center gap-1.5 overflow-hidden">
                 <p className="text-[10px] uppercase tracking-wider text-stone-400 font-bold">{profile?.role}</p>
                 {profile?.subscriptionType && (
-                  <span className={`text-[8px] uppercase px-1.5 py-0.5 rounded-full font-black ${
-                    profile.subscriptionType === 'professional' ? 'bg-purple-100 text-purple-700' :
-                    profile.subscriptionType === 'standard' ? 'bg-orange-100 text-orange-700' :
-                    'bg-stone-100 text-stone-500'
-                  }`}>
-                    {profile.subscriptionType}
-                  </span>
+                  <div className="flex flex-col gap-1 items-start">
+                    <span className={`text-[8px] uppercase px-1.5 py-0.5 rounded-full font-black ${
+                      profile.subscriptionType === 'professional' ? 'bg-purple-100 text-purple-700' :
+                      profile.subscriptionType === 'standard' ? 'bg-orange-100 text-orange-700' :
+                      'bg-stone-100 text-stone-500'
+                    }`}>
+                      {profile.subscriptionType}
+                    </span>
+                  </div>
                 )}
               </div>
             </div>
@@ -306,14 +309,57 @@ export default function Dashboard({ user, profile, onLogout }: DashboardProps) {
                 ))}
               </div>
               <div className="overflow-x-hidden">
-                <AnalyticsModule 
-                  onNavigate={(tab) => setActiveTab(tab)} 
-                  action={moduleAction} 
-                  onActionComplete={() => setModuleAction(null)} 
-                  profile={profile}
-                />
-              </div>
-            </>
+                  <AnalyticsModule 
+                    onNavigate={(tab) => setActiveTab(tab)} 
+                    action={moduleAction} 
+                    onActionComplete={() => setModuleAction(null)} 
+                    profile={profile}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center px-2">
+                    <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Live Stock Catalog</h3>
+                    <Button 
+                      variant="link" 
+                      onClick={() => setActiveTab('inventory')}
+                      className="text-orange-600 font-bold p-0"
+                    >
+                      View All
+                    </Button>
+                  </div>
+                  <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
+                    {[
+                      { name: 'Duck', id: 'duck', type: 'duck' },
+                      { name: 'Egg', id: 'egg', type: 'egg' }
+                    ].map((item) => {
+                      const getImage = (type: string) => {
+                        if (type === 'duck') return 'https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99?auto=format&fit=crop&q=60&w=200';
+                        if (type === 'egg') return 'https://images.unsplash.com/photo-1587486913049-53fc88980cfc?auto=format&fit=crop&q=60&w=200';
+                        return '';
+                      };
+                      return (
+                        <div 
+                          key={item.id} 
+                          className="min-w-[140px] sm:min-w-[180px] bg-white p-2 rounded-3xl border border-stone-200 shadow-xs snap-start hover:border-orange-200 transition-colors cursor-pointer group"
+                          onClick={() => setActiveTab('inventory')}
+                        >
+                          <div className="h-24 sm:h-32 w-full rounded-2xl overflow-hidden mb-3 relative">
+                            <img 
+                              src={getImage(item.type)} 
+                              alt={item.name} 
+                              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-stone-900/10" />
+                          </div>
+                          <p className="text-center font-black text-xs text-stone-900 uppercase tracking-tighter">{item.name}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
           )}
 
           <div className="w-full">

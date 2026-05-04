@@ -17,10 +17,17 @@ export default function AIInsights({ profile }: { profile: any }) {
       if (!profile) return;
       // Fetch some context data
       const invSnap = await getDocs(query(collection(db, 'inventory'), where('ownerId', '==', profile.uid)));
-      const logsSnap = await getDocs(query(collection(db, 'farmlogs'), where('ownerId', '==', profile.uid), orderBy('timestamp', 'desc'), limit(10)));
+      const logsSnap = await getDocs(query(collection(db, 'farmlogs'), where('ownerId', '==', profile.uid)));
       
       const inventory = invSnap.docs.map(d => d.data());
-      const logs = logsSnap.docs.map(d => d.data());
+      const logs = logsSnap.docs
+        .map(d => d.data())
+        .sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeB - timeA;
+        })
+        .slice(0, 10);
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const prompt = `

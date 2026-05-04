@@ -18,17 +18,16 @@ if (typeof window !== 'undefined') {
   emailjs.init(PUBLIC_KEY);
 }
 
-export const sendOTPEmail = async (email: string, otp: string, userName = "User") => {
+export const sendOTPEmail = async (email: string, otp: string) => {
   try {
-    console.log("START EMAIL SEND");
+    console.log("START EMAIL SEND TO:", email);
 
     const response = await emailjs.send(
       SERVICE_ID,
       TEMPLATE_ID,
       {
         to_email: email,
-        passcode: otp,
-        user_name: userName,
+        otp: otp,
       },
       PUBLIC_KEY
     );
@@ -55,85 +54,65 @@ export const otpService = {
     return Math.floor(100000 + Math.random() * 900000).toString();
   },
 
-  async sendOTP(email: string, otp: string, userName = "User") {
-    if (!email) {
-      console.error("sendOTP: Email address is missing.");
-      throw new Error("Email address is required to send OTP.");
-    }
-    return await sendOTPEmail(email, otp, userName);
+  async sendOTP(email: string, otp: string) {
+    return await sendOTPEmail(email, otp);
   },
 
-  async saveOTP(userId: string, email: string, otp: string) {
-    if (!userId) {
-      throw new Error('User ID is required to save OTP');
-    }
+  async saveOTP(email: string, otp: string) {
     try {
-      console.log("OTP SAVED");
-      
+      const { Timestamp } = await import('firebase/firestore');
       const otpData = {
-        otp,
-        email,
-        verified: false,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes expiry
-        attempts: 0
+        otp: otp,
+        createdAt: Timestamp.now(),
+        verified: false
       };
 
-      await setDoc(doc(db, 'emailOtps', userId), otpData);
-    } catch (error) {
+      await setDoc(doc(db, 'otp_verification', email), otpData);
+      console.log('OTP saved successfully for:', email);
+    } catch (error: any) {
       console.error("Firestore Error saving OTP:", error);
-      throw error;
+      const { handleFirestoreError, OperationType } = await import('../lib/firebase');
+      handleFirestoreError(error, OperationType.WRITE, `otp_verification/${email}`);
     }
   },
 
-  async verifyOTP(userId: string, enteredOtp: string): Promise<{ success: boolean; message: string }> {
-    if (!userId) {
-      return { success: false, message: 'User session expired. Please log in again.' };
+  async verifyOTP(email: string, enteredOtp: string): Promise<{ success: boolean; message: string }> {
+    if (!email) {
+      return { success: false, message: 'Email is required for verification.' };
     }
     try {
-      const otpDocRef = doc(db, 'emailOtps', userId);
+      const otpDocRef = doc(db, 'otp_verification', email);
       const otpDoc = await getDoc(otpDocRef);
 
       if (!otpDoc.exists()) {
-        return { success: false, message: 'OTP not found. Please request a new one.' };
+        return { success: false, message: 'OTP not found' };
       }
 
       const data = otpDoc.data();
-      
-      if (data.verified) {
-        return { success: false, message: 'This OTP has already been verified.' };
-      }
-
-      if (data.attempts >= 5) {
-        return { success: false, message: 'Too many failed attempts. Please request a new OTP.' };
-      }
-
+      const { Timestamp } = await import('firebase/firestore');
+      const createdAt = (data.createdAt as any).toMillis();
       const now = Date.now();
-      if (now > data.expiresAt) {
-        console.log("OTP EXPIRED");
-        return { success: false, message: 'OTP has expired.' };
-      }
-
-      if (data.otp !== enteredOtp) {
-        // Increment attempts
-        await updateDoc(otpDocRef, {
-          attempts: increment(1)
-        });
-        return { success: false, message: 'Invalid OTP.' };
-      }
-
-      // Success
-      await updateDoc(otpDocRef, {
-        verified: true
-      });
       
-      console.log("OTP VERIFIED");
-      return { success: true, message: 'Welcome to ChickMart' };
+      // 60 seconds expiry check
+      if (now - createdAt > 60000) {
+        return { success: false, message: 'OTP expired' };
+      }
+
+      if (data.otp === enteredOtp) {
+        // Success
+        await updateDoc(otpDocRef, {
+          verified: true
+        });
+        
+        return { success: true, message: 'Welcome to ChickMart 🎉' };
+      } else {
+        return { success: false, message: 'Invalid OTP' };
+      }
     } catch (error: any) {
-      console.error('Verify OTP Error:', error);
+      console.error('Verification failed:', error);
       return { 
         success: false, 
-        message: 'Verification failed: ' + (error.message || 'Unknown error') 
+        message: 'Verification failed' 
       };
     }
   }
